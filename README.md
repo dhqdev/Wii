@@ -39,7 +39,11 @@ Celular (controle):           https://192.168.0.10:8443/controller.html
    - **iPhone (Safari):** toque em *Mostrar detalhes* → *visitar este site* → *Visitar site*.
    - **Android (Chrome):** toque em *Avançado* → *Continuar para ... (não seguro)*.
 4. Toque em **Conectar controle** e permita o acesso a "Movimento e orientação".
-5. Segure o celular como um controle do Wii (tela para cima, topo apontando para o monitor) e mexa.
+5. Segure o celular do jeito que preferir e mexa:
+   - **deitado** (tela para cima, topo apontando para o monitor), como um Wii Remote;
+   - **em pé** (tela virada para você, traseira apontando para o monitor).
+   O controle percebe a pegada sozinho. Ao trocar de pegada, o ponteiro volta ao centro.
+   Na horizontal (paisagem), os botões se reorganizam como um controle deitado.
 
 ### Atualizar para a versão mais nova
 

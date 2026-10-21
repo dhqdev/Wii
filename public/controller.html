@@ -63,7 +63,7 @@
   .hint { position:absolute; bottom:-26px; left:0; right:0; text-align:center; font-size:11px; color:#8c96a1; }
 
   /* ajustes p/ celulares baixos */
-  @media (max-height: 700px) {
+  @media (orientation: portrait) and (max-height: 860px) {
     .remote { padding-top:14px; }
     .dpad { transform:scale(.85); margin:-8px 0; }
     .a { width:78px; height:78px; margin-top:8px; }
@@ -72,6 +72,38 @@
     .speaker { margin-top:14px; }
     .num { width:46px; height:46px; }
     .nums { gap:12px; }
+  }
+
+
+  /* em pé: os grupos não interferem no layout */
+  .g { display:contents; }
+  .g4.nums { display:flex; }
+
+  /* celular deitado: controle na horizontal, botões espalhados */
+  @media (orientation: landscape) {
+    body { padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    .remote { flex-direction:row; align-items:center; justify-content:space-evenly; width:min(94vw, 980px); height:min(78dvh, 420px); margin-top:16px;
+      padding:0 3vw; gap:3vw; border-radius:44px/52px; background:linear-gradient(180deg,#eceff3 0%,#fff 16%,#fff 84%,#e7ebf0 100%); }
+    .g { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:min(4dvh,18px); }
+    .g1 { position:static; }
+    .power { position:absolute; left:22px; top:18px; margin:0; width:36px; height:36px; }
+    .dpad { margin:0; }
+    .a { width:min(25dvh, 100px); height:min(25dvh, 100px); margin:0; font-size:34px; }
+    .b { width:min(26dvh, 104px); height:min(14dvh, 54px); margin:0; border-radius:27px; }
+    .trio { margin:0; gap:22px; }
+    .speaker { margin:0; }
+    .g4.nums { flex-direction:row; gap:min(5vw, 34px); margin:0; }
+    .num { width:min(20dvh, 72px); height:min(20dvh, 72px); font-size:26px; }
+    .g5 { flex-direction:column; gap:10px; }
+    .leds { flex-direction:column; margin:0; gap:10px; }
+    .leds i { width:5px; height:12px; }
+    .brand { display:none; }
+    .status { top:-22px; }
+    .hint { bottom:-22px; }
+  }
+  @media (orientation: landscape) and (max-height: 360px) {
+    .dpad { transform:scale(.8); margin:-15px; }
+    .speaker { display:none; }
   }
 
   .overlay { position:fixed; inset:0; background:rgba(233,237,242,.97); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:28px; text-align:center; z-index:10; }
@@ -94,6 +126,7 @@
 
   <div class="remote" id="remote">
     <div class="status" id="status">Conectando…</div>
+    <div class="g g1">
     <button class="btn power" data-b="POWER" aria-label="Centralizar">
       <svg viewBox="0 0 24 24" fill="none" stroke="#e5484d" stroke-width="2.6" stroke-linecap="round"><path d="M12 3v8"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>
     </button>
@@ -104,8 +137,12 @@
       <button class="btn r" data-b="RIGHT" aria-label="Direita"></button>
       <button class="btn d" data-b="DOWN" aria-label="Baixo"></button>
     </div>
+    </div>
+    <div class="g g2">
     <button class="btn a" data-b="A">A</button>
     <button class="btn b" data-b="B">B</button>
+    </div>
+    <div class="g g3">
     <div class="row trio">
       <button class="btn small" data-b="MINUS">−</button>
       <button class="btn small home" data-b="HOME" aria-label="Home">
@@ -114,12 +151,15 @@
       <button class="btn small" data-b="PLUS">+</button>
     </div>
     <div class="speaker" id="speaker"></div>
-    <div class="row nums">
+    </div>
+    <div class="g g4 row nums">
       <button class="btn num" data-b="ONE">1</button>
       <button class="btn num" data-b="TWO">2</button>
     </div>
+    <div class="g g5">
     <div class="leds" id="leds"><i></i><i></i><i></i><i></i></div>
     <div class="brand">OpenWii</div>
+    </div>
     <div class="hint" id="hint">⏻ ou segurar ⌂ = centralizar ponteiro</div>
   </div>
 
@@ -264,15 +304,46 @@
   }
   const wrap = (d) => ((d + 540) % 360) - 180;
 
+  // Matriz de rotação do aparelho (padrão W3C: R = Rz(alpha)·Rx(beta)·Ry(gamma)).
+  function rotate(e, v) {
+    const a = e.alpha * D2R, b = e.beta * D2R, g = (e.gamma || 0) * D2R;
+    const ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b), cg = Math.cos(g), sg = Math.sin(g);
+    const R = [
+      [ca * cg - sa * sb * sg, -sa * cb, ca * sg + sa * sb * cg],
+      [sa * cg + ca * sb * sg, ca * cb, sa * sg - ca * sb * cg],
+      [-cb * sg, sb, cb * cg],
+    ];
+    return R.map((row) => row[0] * v[0] + row[1] * v[1] + row[2] * v[2]);
+  }
+  // Eixo que aponta para a tela:
+  //  - celular deitado (tela para cima): o "topo" da tela (muda se estiver na horizontal);
+  //  - celular em pé (tela virada para você): a traseira (câmera).
+  // Escolhemos o que estiver mais na horizontal, e trocamos sozinhos se você mudar a pegada.
+  function uiUp() {
+    const ang = ((screen.orientation && screen.orientation.angle) ?? window.orientation ?? 0);
+    const n = ((Math.round(ang / 90) % 4) + 4) % 4;
+    return [[0, 1, 0], [1, 0, 0], [0, -1, 0], [-1, 0, 0]][n];
+  }
+  const BACK = [0, 0, -1];
+  let axis = null, forceAxis = false;
+  window.addEventListener('orientationchange', () => { axis = null; });
+  screen.orientation && screen.orientation.addEventListener && screen.orientation.addEventListener('change', () => { axis = null; });
+
   function onOrientation(e) {
     if (e.alpha === null || e.beta === null) return;
-    const a = e.alpha * D2R, b = e.beta * D2R;
-    const vx = -Math.sin(a) * Math.cos(b), vy = Math.cos(a) * Math.cos(b), vz = Math.sin(b);
-    const yaw = Math.atan2(vx, vy) / D2R;          // cresce girando para a DIREITA
-    const pitch = Math.asin(Math.max(-1, Math.min(1, vz))) / D2R; // cresce inclinando para CIMA
+    const wu = rotate(e, uiUp()), wb = rotate(e, BACK);
+    let changed = false;
+    if (axis === null) { axis = Math.abs(wu[2]) <= Math.abs(wb[2]) ? 'top' : 'back'; changed = true; }
+    else {
+      const cur = axis === 'top' ? wu : wb, other = axis === 'top' ? wb : wu;
+      if (Math.abs(cur[2]) > 0.85 && Math.abs(other[2]) < 0.6) { axis = axis === 'top' ? 'back' : 'top'; changed = true; }
+    }
+    const d = axis === 'top' ? wu : wb;
+    const yaw = Math.atan2(d[0], d[1]) / D2R;                       // cresce girando para a DIREITA
+    const pitch = Math.asin(Math.max(-1, Math.min(1, d[2]))) / D2R; // cresce apontando para CIMA
     roll = (e.gamma || 0) * D2R;
     lastYaw = yaw; lastPitch = pitch;
-    if (yaw0 === null) recenter();
+    if (yaw0 === null || changed) { recenter(); if (changed && yaw0 !== null) buzz(15); }
     gotMotion = true;
 
     const rx = RANGE_X / cfg.sens, ry = RANGE_Y / cfg.sens;
@@ -335,7 +406,6 @@
     window.addEventListener('deviceorientation', onOrientation);
     try { await navigator.wakeLock?.request('screen'); } catch {}
     try { await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }); } catch {}
-    try { await screen.orientation?.lock?.('portrait'); } catch {}
     $('start').classList.add('hidden');
     connect();
     loop();

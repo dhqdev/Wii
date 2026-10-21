@@ -8,18 +8,13 @@
 <body>
 <script src="/js/wii.js"></script>
 <script src="/js/game.js"></script>
+<script src="/games/fruit-art.js"></script>
 <script>
 const { U } = OpenWiiGame;
-const FRUITS = [
-  { name: 'melancia', r: 52, skin: '#2f9e3f', stripe: '#1d6e2a', inner: '#ff3b4f', rim: '#f6ffe6', juice: '#ff3b4f', seeds: true },
-  { name: 'laranja', r: 38, skin: '#ff9a1f', inner: '#ffc457', rim: '#fff1cf', juice: '#ffa62b' },
-  { name: 'maçã', r: 36, skin: '#e6283c', inner: '#fff3c9', rim: '#fffbe9', juice: '#ffe9a8', stem: true },
-  { name: 'limão', r: 34, skin: '#d8e82a', inner: '#f4ff9c', rim: '#fbffe0', juice: '#e8f55a' },
-  { name: 'pêssego', r: 36, skin: '#ff9e7a', inner: '#ffd27a', rim: '#fff0d0', juice: '#ffb36b' },
-  { name: 'coco', r: 40, skin: '#7a4a2a', inner: '#ffffff', rim: '#f2efe8', juice: '#f8f8f8' },
-];
+const { ART, BOMB, splat: makeSplat } = FruitArt;
+const FRUITS = Object.entries(ART).map(([name, art]) => ({ name, ...art }));
 
-let fruits = [], halves = [], particles = [], splats = [], texts = [];
+let fruits = [], halves = [], particles = [], splats = [], texts = [], slashes = [];
 let score = 0, lives = 3, best = U.best('fruit'), spawnT = 0, elapsed = 0, over = false;
 const blades = new Map(); // id -> { x, y, trail: [], slicedAt, combo }
 let wood = null;
@@ -66,20 +61,20 @@ function spawnWave() {
     const bombChance = Math.min(0.08 + elapsed / 400, 0.22);
     const isBomb = Math.random() < bombChance && elapsed > 5;
     const type = isBomb ? null : U.pick(FRUITS);
-    const r = isBomb ? 36 : type.r;
+    const r = isBomb ? BOMB.r : type.r;
     const x = U.rand(G.W * 0.18, G.W * 0.82);
     const h = U.rand(G.H * 0.55, G.H * 0.9);
     fruits.push({
       type, bomb: isBomb, r, x, y: G.H + r + U.rand(0, 60),
       vx: (G.W / 2 - x) * U.rand(0.15, 0.45) + U.rand(-60, 60),
       vy: -Math.sqrt(2 * gravity() * h),
-      a: U.rand(0, 6.28), va: U.rand(-3, 3),
+      a: U.rand(-0.6, 0.6), va: U.rand(-2.5, 2.5),
     });
   }
 }
 
 function reset() {
-  fruits = []; halves = []; particles = []; splats = []; texts = [];
+  fruits = []; halves = []; particles = []; splats = []; texts = []; slashes = [];
   score = 0; lives = 3; spawnT = 0.6; elapsed = 0; over = false;
   blades.clear();
   G.wii.sfx.start();
@@ -91,14 +86,17 @@ function sliceFruit(f, angle, blade) {
   G.wii.sfx.slice();
   setTimeout(() => G.wii.sfx.splat(), 30);
   const nx = Math.cos(angle + Math.PI / 2), ny = Math.sin(angle + Math.PI / 2);
+  // as metades nascem alinhadas com o golpe; spin guarda a rotação que a fruta tinha
   for (const s of [1, -1]) {
-    halves.push({ type: f.type, r: f.r, x: f.x, y: f.y, vx: f.vx + nx * 140 * s, vy: f.vy * 0.4 + ny * 140 * s - 60, a: angle, va: s * U.rand(2, 5), side: s, life: 3 });
+    halves.push({ type: f.type, r: f.r, x: f.x + nx * 3 * s, y: f.y + ny * 3 * s, vx: f.vx * 0.6 + nx * 150 * s + Math.cos(angle) * 60, vy: f.vy * 0.35 + ny * 150 * s - 80, a: angle, spin: f.a - angle, va: s * U.rand(1.5, 4), side: s, life: 3 });
   }
-  for (let i = 0; i < 18; i++) {
-    const a = U.rand(0, 6.28), sp = U.rand(80, 420);
-    particles.push({ x: f.x, y: f.y, vx: Math.cos(a) * sp + f.vx * 0.3, vy: Math.sin(a) * sp - 120, r: U.rand(3, 8), c: f.type.juice, life: U.rand(0.4, 0.9) });
+  for (let i = 0; i < 26; i++) {
+    const a = U.rand(0, 6.28), sp = U.rand(80, 520);
+    particles.push({ x: f.x, y: f.y, vx: Math.cos(a) * sp + Math.cos(angle) * 200, vy: Math.sin(a) * sp - 140, r: U.rand(2, 8), c: Math.random() < 0.7 ? f.type.juice : f.type.juice2, life: U.rand(0.35, 0.9) });
   }
-  splats.push({ x: f.x, y: f.y, r: f.r * U.rand(1.1, 1.6), c: f.type.juice, a: U.rand(0, 6.28), life: 4, seed: Math.random() });
+  slashes.push({ x: f.x, y: f.y, a: angle, r: f.r, life: 0.25 });
+  splats.push({ x: f.x, y: f.y, a: U.rand(0, 6.28), life: 5, img: makeSplat(f.r * U.rand(1.1, 1.5), f.type.juice, Math.floor(Math.random() * 1e9)) });
+  if (splats.length > 25) splats.shift();
   score += 1;
   blade.combo.push({ x: f.x, y: f.y });
   G.wii.rumble(blade.id, 25);
@@ -198,6 +196,8 @@ function update(dt) {
   halves = halves.filter((h) => h.life > 0 && h.y < G.H + 120);
   for (const q of particles) { q.vy += g * 0.6 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; }
   particles = particles.filter((q) => q.life > 0);
+  for (const s of slashes) s.life -= dt;
+  slashes = slashes.filter((s) => s.life > 0);
   for (const s of splats) s.life -= dt;
   splats = splats.filter((s) => s.life > 0);
   for (const t of texts) { t.life -= dt; t.y -= 40 * dt; }
@@ -205,88 +205,74 @@ function update(dt) {
   flash = Math.max(0, flash - dt * 1.5);
 }
 
-function drawFruitWhole(c, f) {
-  const t = f.type;
+function drawSprite(c, img, x, y, a) {
+  const s = img.width / FruitArt.S;
   c.save();
-  c.translate(f.x, f.y);
-  c.rotate(f.a);
-  if (f.bomb) {
-    c.fillStyle = '#23262b';
-    c.beginPath(); c.arc(0, 0, f.r, 0, 7); c.fill();
-    c.fillStyle = 'rgba(255,255,255,.18)';
-    c.beginPath(); c.arc(-f.r * 0.35, -f.r * 0.35, f.r * 0.35, 0, 7); c.fill();
-    c.fillStyle = '#4a4d52'; c.fillRect(-8, -f.r - 10, 16, 14);
-    c.strokeStyle = '#c9a26b'; c.lineWidth = 3;
-    c.beginPath(); c.moveTo(0, -f.r - 10); c.quadraticCurveTo(12, -f.r - 24, 6, -f.r - 32); c.stroke();
-    const sp = 6 + Math.random() * 6;
-    c.fillStyle = Math.random() < 0.5 ? '#ffd23f' : '#ff6a1f';
-    c.beginPath(); c.arc(6, -f.r - 32, sp / 2, 0, 7); c.fill();
-    c.strokeStyle = '#ff3030'; c.lineWidth = 4; c.font = '900 28px system-ui'; c.textAlign = 'center'; c.textBaseline = 'middle';
-    c.fillStyle = '#ff4545'; c.fillText('✖', 0, 2);
-    c.restore();
-    return;
-  }
-  const g = c.createRadialGradient(-f.r * 0.35, -f.r * 0.35, f.r * 0.1, 0, 0, f.r);
-  g.addColorStop(0, lighten(t.skin, 50));
-  g.addColorStop(1, t.skin);
-  c.fillStyle = g;
-  c.beginPath();
-  if (t.name === 'limão') c.ellipse(0, 0, f.r * 1.15, f.r * 0.85, 0, 0, 7);
-  else c.arc(0, 0, f.r, 0, 7);
-  c.fill();
-  if (t.stripe) {
-    c.strokeStyle = t.stripe; c.lineWidth = 6;
-    for (let i = -2; i <= 2; i++) {
-      c.beginPath(); c.ellipse(0, 0, Math.abs(i) * f.r * 0.22 + 4, f.r - 2, 0, 0, 7); c.stroke();
-    }
-  }
-  if (t.name === 'coco') {
-    c.fillStyle = 'rgba(0,0,0,.25)';
-    for (let i = 0; i < 3; i++) { c.beginPath(); c.arc(Math.cos(i * 2.1) * 10, Math.sin(i * 2.1) * 10 - 6, 4, 0, 7); c.fill(); }
-  }
-  if (t.stem) {
-    c.strokeStyle = '#5a3a1a'; c.lineWidth = 4;
-    c.beginPath(); c.moveTo(0, -f.r + 4); c.lineTo(3, -f.r - 10); c.stroke();
-    c.fillStyle = '#3fb54a';
-    c.beginPath(); c.ellipse(12, -f.r - 6, 10, 5, -0.5, 0, 7); c.fill();
-  }
-  c.fillStyle = 'rgba(255,255,255,.35)';
-  c.beginPath(); c.ellipse(-f.r * 0.4, -f.r * 0.45, f.r * 0.22, f.r * 0.12, -0.6, 0, 7); c.fill();
+  c.translate(x, y);
+  c.rotate(a);
+  c.drawImage(img, -s / 2, -s / 2, s, s);
   c.restore();
+}
+
+// sombra suave projetada na madeira (dá profundidade)
+function drawShadow(c, x, y, r) {
+  const g = c.createRadialGradient(x + r * 0.35, y + r * 0.55, 0, x + r * 0.35, y + r * 0.55, r * 1.1);
+  g.addColorStop(0, 'rgba(30,12,0,.35)');
+  g.addColorStop(1, 'rgba(30,12,0,0)');
+  c.fillStyle = g;
+  c.beginPath(); c.ellipse(x + r * 0.35, y + r * 0.55, r * 1.1, r * 0.9, 0, 0, 7); c.fill();
 }
 
 function drawHalf(c, h) {
-  const t = h.type;
   c.save();
+  c.globalAlpha = Math.min(1, h.life * 2);
   c.translate(h.x, h.y);
   c.rotate(h.a);
-  c.globalAlpha = Math.min(1, h.life);
+  // recorta metade da fruta: casca por trás e polpa por cima
+  const R = h.r * 1.6;
   c.beginPath();
-  if (h.side > 0) c.arc(0, 0, h.r, 0, Math.PI); else c.arc(0, 0, h.r, Math.PI, Math.PI * 2);
-  c.closePath();
-  c.fillStyle = t.skin; c.fill();
-  c.beginPath();
-  if (h.side > 0) c.arc(0, 0, h.r * 0.88, 0, Math.PI); else c.arc(0, 0, h.r * 0.88, Math.PI, Math.PI * 2);
-  c.closePath();
-  c.fillStyle = t.rim; c.fill();
-  c.beginPath();
-  if (h.side > 0) c.arc(0, 0, h.r * 0.78, 0, Math.PI); else c.arc(0, 0, h.r * 0.78, Math.PI, Math.PI * 2);
-  c.closePath();
-  c.fillStyle = t.inner; c.fill();
-  if (t.seeds) {
-    c.fillStyle = '#222';
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI + 0.25;
-      c.beginPath(); c.ellipse(Math.cos(a) * h.r * 0.45, Math.sin(a) * h.r * 0.45 * h.side, 3, 5, a, 0, 7); c.fill();
-    }
-  }
+  c.rect(-R, h.side > 0 ? 0 : -R, R * 2, R);
+  c.clip();
+  c.rotate(h.spin);
+  const s = h.type.whole.width / FruitArt.S;
+  c.drawImage(h.type.whole, -s / 2, -s / 2, s, s);
+  c.rotate(-h.spin);
+  // a polpa fica levemente achatada, como se estivesse virada para a tela
+  c.scale(1, 0.98);
+  c.rotate(h.spin);
+  c.drawImage(h.type.inside, -s / 2, -s / 2, s, s);
   c.restore();
 }
 
-function lighten(hex, amt) {
-  const n = parseInt(hex.slice(1), 16);
-  const r = Math.min(255, (n >> 16) + amt), g = Math.min(255, ((n >> 8) & 255) + amt), b = Math.min(255, (n & 255) + amt);
-  return `rgb(${r},${g},${b})`;
+function drawBlade(c, b) {
+  const tr = b.trail;
+  if (tr.length < 2) return;
+  const active = tr[tr.length - 1].on;
+  // polígono afinando do fim para a ponta
+  const left = [], right = [];
+  for (let i = 0; i < tr.length; i++) {
+    const p = tr[i], q = tr[Math.min(i + 1, tr.length - 1)], o = tr[Math.max(i - 1, 0)];
+    const ang = Math.atan2(q.y - o.y, q.x - o.x) + Math.PI / 2;
+    const w = (active ? 11 : 3) * Math.pow(i / (tr.length - 1), 1.4);
+    left.push([p.x + Math.cos(ang) * w, p.y + Math.sin(ang) * w]);
+    right.push([p.x - Math.cos(ang) * w, p.y - Math.sin(ang) * w]);
+  }
+  const poly = () => {
+    c.beginPath();
+    left.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+    for (let i = right.length - 1; i >= 0; i--) c.lineTo(right[i][0], right[i][1]);
+    c.closePath();
+  };
+  c.save();
+  c.globalCompositeOperation = 'lighter';
+  if (active) {
+    c.shadowColor = b.color; c.shadowBlur = 28;
+    c.fillStyle = b.color; c.globalAlpha = 0.7; poly(); c.fill();
+    c.shadowBlur = 0;
+  }
+  c.globalAlpha = active ? 1 : 0.35;
+  c.fillStyle = '#ffffff'; poly(); c.fill();
+  c.restore();
 }
 
 function draw() {
@@ -295,51 +281,63 @@ function draw() {
 
   for (const s of splats) {
     c.save();
-    c.globalAlpha = Math.min(0.55, s.life / 4);
-    c.fillStyle = s.c;
+    c.globalAlpha = Math.min(0.75, s.life / 3);
     c.translate(s.x, s.y); c.rotate(s.a);
-    c.beginPath();
-    for (let i = 0; i < 14; i++) {
-      const a = (i / 14) * Math.PI * 2;
-      const rr = s.r * (0.6 + 0.4 * Math.abs(Math.sin(i * 3.7 + s.seed * 10)));
-      i ? c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : c.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
-    }
-    c.fill();
+    const sz = s.img.width / FruitArt.S;
+    c.drawImage(s.img, -sz / 2, -sz / 2, sz, sz);
     c.restore();
   }
+  for (const h of halves) drawShadow(c, h.x, h.y, h.r * 0.8);
+  for (const f of fruits) drawShadow(c, f.x, f.y, f.r);
   for (const h of halves) drawHalf(c, h);
-  for (const f of fruits) drawFruitWhole(c, f);
+  for (const f of fruits) {
+    if (f.bomb) {
+      drawSprite(c, BOMB.whole, f.x, f.y, f.a);
+      // faísca do pavio
+      const fx = f.x + Math.cos(f.a) * BOMB.fuse.x - Math.sin(f.a) * BOMB.fuse.y;
+      const fy = f.y + Math.sin(f.a) * BOMB.fuse.x + Math.cos(f.a) * BOMB.fuse.y;
+      const g = c.createRadialGradient(fx, fy, 0, fx, fy, 16);
+      g.addColorStop(0, 'rgba(255,255,220,1)'); g.addColorStop(0.3, 'rgba(255,190,40,.9)'); g.addColorStop(1, 'rgba(255,80,0,0)');
+      c.fillStyle = g; c.beginPath(); c.arc(fx, fy, 14 + Math.random() * 6, 0, 7); c.fill();
+      if (Math.random() < 0.8) particles.push({ x: fx, y: fy, vx: U.rand(-120, 120), vy: U.rand(-160, 20), r: U.rand(1.5, 3), c: U.pick(['#fff3a0', '#ffb020', '#ff6a00']), life: U.rand(0.15, 0.35), glow: true });
+    } else {
+      drawSprite(c, f.type.whole, f.x, f.y, f.a);
+    }
+  }
   for (const q of particles) {
-    c.globalAlpha = Math.min(1, q.life * 2);
+    c.globalAlpha = Math.min(1, q.life * 2.5);
     c.fillStyle = q.c;
-    c.beginPath(); c.arc(q.x, q.y, q.r, 0, 7); c.fill();
+    c.beginPath();
+    if (q.glow) c.arc(q.x, q.y, q.r, 0, 7);
+    else c.ellipse(q.x, q.y, q.r * 1.25, q.r * 0.9, Math.atan2(q.vy, q.vx), 0, 7);
+    c.fill();
+    if (!q.glow && q.r > 4) {
+      c.fillStyle = 'rgba(255,255,255,.45)';
+      c.beginPath(); c.arc(q.x - q.r * 0.3, q.y - q.r * 0.3, q.r * 0.3, 0, 7); c.fill();
+    }
   }
   c.globalAlpha = 1;
 
-  // rastro da espada
+  // brilho do corte
+  for (const s of slashes) {
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    c.globalAlpha = s.life / 0.25;
+    c.translate(s.x, s.y); c.rotate(s.a);
+    const len = s.r * 3 * (1.2 - s.life / 0.25 * 0.4);
+    const g = c.createLinearGradient(-len, 0, len, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,240,1)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g;
+    c.beginPath(); c.ellipse(0, 0, len, 4, 0, 0, 7); c.fill();
+    c.restore();
+  }
+
   for (const b of blades.values()) {
-    const tr = b.trail;
-    if (tr.length > 1) {
-      for (let i = 1; i < tr.length; i++) {
-        const k = i / tr.length;
-        c.strokeStyle = tr[i].on ? `rgba(255,255,255,${k})` : `rgba(255,255,255,${k * 0.25})`;
-        c.lineWidth = (tr[i].on ? 14 : 5) * k + 1;
-        c.lineCap = 'round';
-        c.beginPath(); c.moveTo(tr[i - 1].x, tr[i - 1].y); c.lineTo(tr[i].x, tr[i].y); c.stroke();
-      }
-      const last = tr[tr.length - 1];
-      if (last.on) {
-        c.shadowColor = b.color; c.shadowBlur = 20;
-        c.strokeStyle = b.color; c.lineWidth = 3;
-        c.beginPath(); c.moveTo(tr[0].x, tr[0].y);
-        for (const pt of tr) c.lineTo(pt.x, pt.y);
-        c.stroke();
-        c.shadowBlur = 0;
-      }
-    }
-    c.fillStyle = b.color;
-    c.beginPath(); c.arc(b.x, b.y, 6, 0, 7); c.fill();
-    c.strokeStyle = '#fff'; c.lineWidth = 2; c.stroke();
+    drawBlade(c, b);
+    c.fillStyle = '#fff';
+    c.shadowColor = b.color; c.shadowBlur = 12;
+    c.beginPath(); c.arc(b.x, b.y, 5, 0, 7); c.fill();
+    c.shadowBlur = 0;
   }
 
   c.textAlign = 'center'; c.textBaseline = 'middle';

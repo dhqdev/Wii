@@ -121,6 +121,14 @@
     setTimeout(() => el.remove(), 2700);
   }
 
+  // Espera o servidor voltar (depois de uma atualização) e recarrega a página.
+  function reloadWhenBack() {
+    const tryIt = () => fetch('/config.json', { cache: 'no-store' })
+      .then((r) => { if (!r.ok) throw new Error(); location.reload(); })
+      .catch(() => setTimeout(tryIt, 700));
+    setTimeout(tryIt, 1500);
+  }
+
   // ---------- conexão ----------
   function connect(opts = {}) {
     const cursorType = opts.cursor || 'hand';
@@ -198,6 +206,9 @@
           removePlayer(m.id);
           toast(`Jogador ${m.id} saiu`, COLORS[m.id - 1]);
           syncMouse();
+        } else if (m.t === 'reload') {
+          toast('🔄 Atualizando o OpenWii…');
+          reloadWhenBack();
         } else if (m.t === 'p') {
           const p = players.get(m.id) || makePlayer(m.id);
           p.tx = (m.x + 1) / 2 * innerWidth;
@@ -252,7 +263,7 @@
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       for (const p of players.values()) {
-        const k = p.id === 0 ? 1 : 1 - Math.pow(0.0008, dt); // suavização exponencial
+        const k = p.id === 0 ? 1 : 1 - Math.exp(-dt / 0.03); // suaviza só o jitter da rede (o filtro forte fica no celular)
         p.px = p.x; p.py = p.y;
         p.x += (p.tx - p.x) * k;
         p.y += (p.ty - p.y) * k;
@@ -297,5 +308,5 @@
     };
   }
 
-  window.OpenWii = { connect, sfx: SFX, toast, COLORS };
+  window.OpenWii = { connect, sfx: SFX, toast, COLORS, reloadWhenBack };
 })();

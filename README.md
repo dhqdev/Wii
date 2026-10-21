@@ -41,6 +41,15 @@ Celular (controle):           https://192.168.0.10:8443/controller.html
 4. Toque em **Conectar controle** e permita o acesso a "Movimento e orientação".
 5. Segure o celular como um controle do Wii (tela para cima, topo apontando para o monitor) e mexa.
 
+### Atualizar para a versão mais nova
+
+Na central, clique em **⟳ Atualizar** (canto inferior esquerdo). Ele faz `git pull`, instala dependências
+novas se precisar, reinicia o servidor e recarrega a tela sozinho. Quando há novidades no GitHub, aparece
+uma bolinha vermelha com o número de atualizações. Os celulares recarregam também; é só tocar em
+**Conectar controle** de novo.
+
+> O botão só funciona na tela do computador (`localhost`) e numa pasta baixada com `git clone`.
+
 ### Botões do controle
 
 | Botão | Função |
@@ -67,8 +76,7 @@ cria um certificado autoassinado na pasta `.cert/` na primeira execução. A tel
   por exemplo `HOST_IP=192.168.0.10 npm start` (no Windows PowerShell: `$env:HOST_IP="192.168.0.10"; npm start`).
 - **O celular não abre a página:** confira se está no mesmo Wi-Fi e libere as portas 8080 e 8443 no firewall
   (no Windows, aceite o aviso do firewall para o Node na primeira execução, marcando "Redes privadas").
-- **O ponteiro "escorrega" com o tempo:** é normal o giroscópio acumular um pouco de erro. Aponte para o
-  centro da tela e toque em ⏻ (ou segure ⌂).
+- **O ponteiro saiu do centro:** aponte para o meio da tela e toque em ⏻ (ou segure ⌂).
 - **Ponteiro invertido:** ajuste em ⚙ → Inverter horizontal/vertical.
 - **Sem som:** clique uma vez na tela do computador (o navegador exige uma interação para liberar áudio).
 - **Portas ocupadas:** `HTTP_PORT=3000 HTTPS_PORT=3443 npm start`.
@@ -82,8 +90,9 @@ cria um certificado autoassinado na pasta `.cert/` na primeira execução. A tel
 ```
 
 - `server.js`: servidor HTTP (8080) e HTTPS (8443), WebSocket em `/ws`, QR code em `/qr.svg`.
-- `public/controller.html`: o Wii Remote. Integra a velocidade angular (`devicemotion.rotationRate`)
-  em torno do eixo vertical (detectado pela gravidade) e do eixo lateral para mover o ponteiro.
+- `launcher.js`: o `npm start` roda o servidor por ele, para poder reiniciar depois do botão Atualizar.
+- `public/controller.html`: o Wii Remote. Lê a orientação do aparelho (`deviceorientation`), calcula para onde
+  o topo do celular aponta (giro horizontal e inclinação) e suaviza com um filtro One Euro.
 - `public/js/wii.js`: biblioteca da tela (cursores, botões, sons sintetizados, mouse como reserva).
 - `public/js/game.js`: base dos jogos (canvas, HUD, menus).
 - `public/games/*.html`: os jogos. Para criar um novo, copie um deles e adicione no array `GAMES` em `public/index.html`.

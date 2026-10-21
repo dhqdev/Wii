@@ -11,6 +11,7 @@ const https = require('https');
 const { WebSocketServer } = require('ws');
 const QRCode = require('qrcode');
 const selfsigned = require('selfsigned');
+const { exec } = require('child_process');
 
 const HTTP_PORT = Number(process.env.HTTP_PORT || 8080);
 const HTTPS_PORT = Number(process.env.HTTPS_PORT || 8443);
@@ -95,6 +96,7 @@ async function handleRequest(req, res) {
     res.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' });
     return res.end(JSON.stringify({ controllerUrl: CONTROLLER_URL, ips: IPS, httpsPort: HTTPS_PORT }));
   }
+  if (pathname.startsWith('/api/update')) return handleUpdate(req, res, pathname);
   if (pathname === '/qr.svg') {
     const svg = await QRCode.toString(CONTROLLER_URL, { type: 'svg', margin: 1, color: { dark: '#1d2733', light: '#ffffff' } });
     res.writeHead(200, { 'Content-Type': MIME['.svg'], 'Cache-Control': 'no-store' });
@@ -118,6 +120,65 @@ async function handleRequest(req, res) {
   });
 }
 
+// ---------- atualização pelo botão da central ----------
+// Só aceita pedidos vindos do próprio computador (a tela abre em localhost).
+
+const RESTART_CODE = 75;
+
+function sh(cmd) {
+  return new Promise((resolve) => {
+    exec(cmd, { cwd: __dirname, timeout: 180000, windowsHide: true }, (err, stdout, stderr) => {
+      resolve({ ok: !err, out: (stdout || '').trim(), err: (stderr || (err && err.message) || '').trim() });
+    });
+  });
+}
+
+function json(res, code, body) {
+  res.writeHead(code, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify(body));
+}
+
+async function handleUpdate(req, res, pathname) {
+  const ip = req.socket.remoteAddress || '';
+  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip)) {
+    return json(res, 403, { error: 'Use o botão na tela do computador (localhost).' });
+  }
+  const repo = await sh('git rev-parse --is-inside-work-tree');
+  if (!repo.ok) return json(res, 200, { error: 'Esta pasta não é um clone do git. Baixe com "git clone" para usar o botão.' });
+
+  if (pathname === '/api/update/check') {
+    const fetch = await sh('git fetch --quiet');
+    if (!fetch.ok) return json(res, 200, { error: 'Não consegui falar com o GitHub: ' + fetch.err });
+    const behind = await sh('git rev-list --count HEAD..@{u}');
+    const log = await sh('git log --format=%s HEAD..@{u}');
+    return json(res, 200, { behind: Number(behind.out) || 0, changes: log.out ? log.out.split('\n').slice(0, 5) : [] });
+  }
+
+  if (pathname === '/api/update' && req.method === 'POST') {
+    const before = (await sh('git rev-parse HEAD')).out;
+    const pull = await sh('git pull --ff-only');
+    if (!pull.ok) return json(res, 200, { error: 'O git pull falhou: ' + pull.err });
+    const after = (await sh('git rev-parse HEAD')).out;
+    if (before === after) return json(res, 200, { updated: false, message: 'Você já está na versão mais nova.' });
+    const changed = (await sh(`git diff --name-only ${before} ${after}`)).out.split('\n');
+    if (changed.some((f) => f === 'package.json' || f === 'package-lock.json')) {
+      console.log('Instalando dependências novas...');
+      const inst = await sh('npm install --no-audit --no-fund');
+      if (!inst.ok) return json(res, 200, { error: 'O npm install falhou: ' + inst.err });
+    }
+    const auto = !!process.env.OPENWII_LAUNCHER;
+    json(res, 200, { updated: true, message: auto ? 'Atualizado! Reiniciando...' : 'Atualizado! Se mudou algo no servidor, reinicie o npm start.' });
+    console.log(`Atualizado ${before.slice(0, 7)} -> ${after.slice(0, 7)}.`);
+    setTimeout(() => {
+      broadcast({ t: 'reload' });
+      // Rodando pelo "npm start" (launcher.js), o servidor volta sozinho com o código novo.
+      if (auto) setTimeout(() => process.exit(RESTART_CODE), 300);
+    }, 200);
+    return;
+  }
+  json(res, 404, { error: 'Não encontrado' });
+}
+
 // ---------- hub WebSocket ----------
 // Telas ("screen") recebem o estado de todos os controles.
 // Controles ("controller") recebem um número de jogador (1–4) e mensagens de vibração.
@@ -131,6 +192,10 @@ function send(ws, msg) {
 function toScreens(msg) {
   const data = JSON.stringify(msg);
   for (const s of screens) if (s.readyState === 1) s.send(data);
+}
+function broadcast(msg) {
+  toScreens(msg);
+  for (const p of players.values()) send(p.ws, msg);
 }
 function playerList() {
   return [...players.keys()].sort();

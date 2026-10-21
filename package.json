@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "OpenWii: central de jogos no computador com o celular como controle do Wii",
   "scripts": {
-    "start": "node server.js"
+    "start": "node launcher.js",
+    "server": "node server.js"
   },
   "repository": {
     "type": "git",

@@ -131,7 +131,7 @@
   </div>
 
   <div class="panel hidden" id="panel">
-    <label>Sensibilidade <input type="range" id="sens" min="0.4" max="3" step="0.1"></label>
+    <label>Sensibilidade <input type="range" id="sens" min="0.4" max="2.5" step="0.1"></label>
     <label>Inverter horizontal <input type="checkbox" id="invX"></label>
     <label>Inverter vertical <input type="checkbox" id="invY"></label>
     <label>Vibração <input type="checkbox" id="vib"></label>
@@ -149,10 +149,10 @@
     get(k, d) { try { const v = localStorage.getItem('openwii.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem('openwii.' + k, JSON.stringify(v)); } catch {} },
   };
-  const cfg = { sens: store.get('sens', 1.2), invX: store.get('invX', false), invY: store.get('invY', false), vib: store.get('vib', true) };
+  const cfg = { sens: store.get('sens2', 1), invX: store.get('invX2', false), invY: store.get('invY2', false), vib: store.get('vib', true) };
   $('sens').value = cfg.sens; $('invX').checked = cfg.invX; $('invY').checked = cfg.invY; $('vib').checked = cfg.vib;
   for (const k of ['sens', 'invX', 'invY', 'vib']) {
-    $(k).addEventListener('input', (e) => { cfg[k] = e.target.type === 'checkbox' ? e.target.checked : Number(e.target.value); store.set(k, cfg[k]); });
+    $(k).addEventListener('input', (e) => { cfg[k] = e.target.type === 'checkbox' ? e.target.checked : Number(e.target.value); store.set(k === 'vib' ? k : k + '2', cfg[k]); });
   }
   $('settingsBtn').onclick = () => $('panel').classList.toggle('hidden');
   $('closePanel').onclick = () => $('panel').classList.add('hidden');
@@ -169,6 +169,12 @@
         setStatus(`Conectado · <b>Jogador ${m.id}</b>`);
         [...$('leds').children].forEach((el, i) => el.classList.toggle('on', i === m.id - 1));
         buzz([30, 60, 30]);
+      } else if (m.t === 'reload') {
+        setStatus('🔄 Atualizando…');
+        const tryIt = () => fetch('/config.json', { cache: 'no-store' })
+          .then((r) => { if (!r.ok) throw new Error(); location.reload(); })
+          .catch(() => setTimeout(tryIt, 700));
+        setTimeout(tryIt, 1500);
       } else if (m.t === 'rumble') {
         buzz(m.ms);
       } else if (m.t === 'full') {
@@ -224,47 +230,63 @@
   document.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // ---------- ponteiro ----------
-  // Posição absoluta em [-1, 1]. O giroscópio dá velocidade angular; integramos no tempo.
-  // Usamos a gravidade para descobrir o eixo "vertical do mundo", então funciona com o
-  // celular deitado (tela para cima) ou mais em pé.
+  // Usamos a orientação absoluta do aparelho (deviceorientation), que é padronizada em
+  // iPhone e Android, em vez de integrar o giroscópio (cada sistema reporta eixos/sinais
+  // diferentes). Calculamos para onde aponta o TOPO do celular:
+  //   topo no mundo = (-sen(alpha)·cos(beta), cos(alpha)·cos(beta), sen(beta))
+  // Daí saem o giro horizontal (yaw) e a inclinação (pitch). Girar o pulso (gamma) não
+  // mexe o ponteiro, igual ao Wii Remote.
   let px = 0, py = 0, roll = 0;
-  let grav = { x: 0, y: 0, z: 1 };
-  let lastT = 0, gotMotion = false, dirty = true;
-  const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const RANGE = 22; // graus para ir do centro até a borda (com sensibilidade 1)
+  let yaw0 = null, pitch0 = 0, lastYaw = 0, lastPitch = 0;
+  let gotMotion = false, dirty = true;
+  const RANGE_X = 24, RANGE_Y = 16; // graus do centro até a borda (sensibilidade 1)
+  const D2R = Math.PI / 180;
 
-  function recenter() { px = 0; py = 0; dirty = true; }
+  // Filtro "One Euro": parado = sem tremida; rápido = sem atraso.
+  function OneEuro(minCutoff, beta, dCutoff = 1) {
+    let x = null, dx = 0, t = 0;
+    const alpha = (cutoff, dt) => 1 / (1 + 1 / (2 * Math.PI * cutoff * dt));
+    return (v, now) => {
+      if (x === null) { x = v; t = now; return v; }
+      const dt = Math.max(0.001, (now - t) / 1000); t = now;
+      const d = (v - x) / dt;
+      dx += alpha(dCutoff, dt) * (d - dx);
+      const cutoff = minCutoff + beta * Math.abs(dx);
+      x += alpha(cutoff, dt) * (v - x);
+      return x;
+    };
+  }
+  const fx = OneEuro(2, 1.2), fy = OneEuro(2, 1.2);
 
-  function onMotion(e) {
-    const now = performance.now();
-    const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0;
-    lastT = now;
-    const g = e.accelerationIncludingGravity;
-    if (g && g.x !== null) {
-      // iOS reporta o vetor com sinal invertido em relação ao Android.
-      const s = isIOS ? -1 : 1;
-      const gx = g.x * s, gy = g.y * s, gz = g.z * s;
-      const n = Math.hypot(gx, gy, gz) || 1;
-      // filtro passa-baixa para tirar tremidas/balanço
-      grav.x += (gx / n - grav.x) * 0.2;
-      grav.y += (gy / n - grav.y) * 0.2;
-      grav.z += (gz / n - grav.z) * 0.2;
-      roll = Math.atan2(grav.x, grav.z);
-    }
-    const r = e.rotationRate;
-    if (!r || r.alpha === null || !dt) return;
+  function recenter() {
+    yaw0 = lastYaw; pitch0 = lastPitch;
+    px = 0; py = 0; dirty = true;
+  }
+  const wrap = (d) => ((d + 540) % 360) - 180;
+
+  function onOrientation(e) {
+    if (e.alpha === null || e.beta === null) return;
+    const a = e.alpha * D2R, b = e.beta * D2R;
+    const vx = -Math.sin(a) * Math.cos(b), vy = Math.cos(a) * Math.cos(b), vz = Math.sin(b);
+    const yaw = Math.atan2(vx, vy) / D2R;          // cresce girando para a DIREITA
+    const pitch = Math.asin(Math.max(-1, Math.min(1, vz))) / D2R; // cresce inclinando para CIMA
+    roll = (e.gamma || 0) * D2R;
+    lastYaw = yaw; lastPitch = pitch;
+    if (yaw0 === null) recenter();
     gotMotion = true;
-    // velocidade angular no referencial do aparelho (graus/s): x=beta, y=gamma, z=alpha
-    const wx = r.beta || 0, wy = r.gamma || 0, wz = r.alpha || 0;
-    const gn = Math.hypot(grav.x, grav.y, grav.z) || 1;
-    const yaw = (wx * grav.x + wy * grav.y + wz * grav.z) / gn; // giro em torno da vertical
-    const pitch = wx; // inclinar o topo para cima/baixo
-    const dead = 0.6;
-    const k = cfg.sens / RANGE;
-    if (Math.abs(yaw) > dead) px -= yaw * dt * k * (cfg.invX ? -1 : 1);
-    if (Math.abs(pitch) > dead) py -= pitch * dt * k * 1.35 * (cfg.invY ? -1 : 1);
-    px = Math.max(-1, Math.min(1, px));
-    py = Math.max(-1, Math.min(1, py));
+
+    const rx = RANGE_X / cfg.sens, ry = RANGE_Y / cfg.sens;
+    const sx = cfg.invX ? -1 : 1, sy = cfg.invY ? -1 : 1;
+    let dx = wrap(yaw - yaw0) / rx * sx;
+    let dy = -(pitch - pitch0) / ry * sy;
+    // Passou da borda: arrasta o centro junto, para o ponteiro voltar na hora.
+    if (dx > 1) { yaw0 = wrap(yaw - sx * rx); dx = 1; }
+    if (dx < -1) { yaw0 = wrap(yaw + sx * rx); dx = -1; }
+    if (dy > 1) { pitch0 = pitch + sy * ry; dy = 1; }
+    if (dy < -1) { pitch0 = pitch - sy * ry; dy = -1; }
+    const now = performance.now();
+    px = fx(dx, now);
+    py = fy(dy, now);
     dirty = true;
   }
 
@@ -284,6 +306,10 @@
     if (!drag || drag.id !== e.pointerId) return;
     px = Math.max(-1, Math.min(1, px + (e.clientX - drag.x) / 120 * cfg.sens));
     py = Math.max(-1, Math.min(1, py + (e.clientY - drag.y) / 160 * cfg.sens));
+    if (gotMotion) { // mantém o giroscópio coerente com o arraste
+      yaw0 = wrap(lastYaw - px * RANGE_X / cfg.sens * (cfg.invX ? -1 : 1));
+      pitch0 = lastPitch + py * RANGE_Y / cfg.sens * (cfg.invY ? -1 : 1);
+    }
     drag.x = e.clientX; drag.y = e.clientY;
     dirty = true;
   });
@@ -306,7 +332,7 @@
     if (!window.isSecureContext) {
       $('startMsg').textContent = 'Abra pelo endereço https:// para liberar o giroscópio.';
     }
-    window.addEventListener('devicemotion', onMotion);
+    window.addEventListener('deviceorientation', onOrientation);
     try { await navigator.wakeLock?.request('screen'); } catch {}
     try { await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }); } catch {}
     try { await screen.orientation?.lock?.('portrait'); } catch {}

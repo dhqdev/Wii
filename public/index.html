@@ -45,6 +45,11 @@
     display:flex; align-items:center; justify-content:space-between; padding:0 6vw;
     box-shadow:0 -8px 30px rgba(40,60,80,.06);
   }
+  .left { display:flex; flex-direction:column; align-items:flex-start; gap:10px; }
+  .upd { position:relative; font:700 14px system-ui; color:#6b7682; background:#fff; border:2px solid #dfe4e9; border-radius:999px; padding:8px 16px; cursor:pointer; transition:transform .15s, border-color .15s; }
+  .upd.wii-hover, .upd:hover { transform:scale(1.08); border-color:var(--blue); color:var(--blue); }
+  .upd.busy { opacity:.6; pointer-events:none; }
+  .upd .badge { position:absolute; top:-8px; right:-8px; min-width:22px; height:22px; padding:0 6px; border-radius:11px; background:#ff4d5e; color:#fff; font-size:12px; line-height:22px; }
   .logo { font-weight:900; font-size:clamp(18px,2vw,28px); color:#b9c1c9; letter-spacing:-.02em; }
   .logo span { color:#9fd4ff; }
   .clock { text-align:center; color:#a3acb5; }
@@ -74,7 +79,10 @@
     <div class="grid" id="grid"></div>
   </main>
   <footer>
-    <div class="logo">Open<span>Wii</span></div>
+    <div class="left">
+      <div class="logo">Open<span>Wii</span></div>
+      <button class="upd" id="updBtn" data-wii title="Baixar a versão mais nova do GitHub">⟳ Atualizar<span class="badge hidden" id="updBadge"></span></button>
+    </div>
     <div class="clock"><div class="t" id="time">--:--</div><div class="d" id="date"></div></div>
     <button class="qr" data-wii id="qrBtn" title="Conectar controle">
       <div class="pl"><b>Conectar celular</b><div class="dots" id="dots"><i></i><i></i><i></i><i></i></div></div>
@@ -152,6 +160,36 @@
       refreshDots();
       if (![...wii.players.keys()].some((id) => id > 0)) connect.classList.remove('hidden');
     }, 400);
+
+    // Botão Atualizar: git pull no computador + reinício automático
+    const updBtn = document.getElementById('updBtn'), updBadge = document.getElementById('updBadge');
+    async function checkUpdate() {
+      try {
+        const r = await (await fetch('/api/update/check', { cache: 'no-store' })).json();
+        if (r.behind > 0) {
+          updBadge.textContent = r.behind;
+          updBadge.classList.remove('hidden');
+          updBtn.title = 'Novidades: ' + r.changes.join(' · ');
+        } else updBadge.classList.add('hidden');
+      } catch {}
+    }
+    updBtn.onclick = async () => {
+      updBtn.classList.add('busy');
+      updBtn.firstChild.textContent = '⟳ Atualizando…';
+      try {
+        const r = await (await fetch('/api/update', { method: 'POST' })).json();
+        if (r.error) { wii.toast('⚠️ ' + r.error); }
+        else {
+          wii.toast(r.updated ? '✅ ' + r.message : 'ℹ️ ' + r.message);
+          if (r.updated) return; // a página recarrega sozinha quando o servidor voltar
+        }
+      } catch { wii.toast('⚠️ Não consegui falar com o servidor.'); }
+      updBtn.classList.remove('busy');
+      updBtn.firstChild.textContent = '⟳ Atualizar';
+      checkUpdate();
+    };
+    checkUpdate();
+    setInterval(checkUpdate, 5 * 60 * 1000);
 
     // Relógio
     function tick() {

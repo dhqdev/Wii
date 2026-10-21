@@ -1,0 +1,24 @@
+{
+  "name": "openwii",
+  "version": "1.0.0",
+  "description": "OpenWii: central de jogos no computador com o celular como controle do Wii",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dhqdev/Wii.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/dhqdev/Wii/issues"
+  },
+  "homepage": "https://github.com/dhqdev/Wii#readme",
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "selfsigned": "^5.5.0",
+    "ws": "^8.22.0"
+  }
+}

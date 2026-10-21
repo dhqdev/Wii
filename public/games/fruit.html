@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fruit Ninja · OpenWii</title>
+</head>
+<body>
+<script src="/js/wii.js"></script>
+<script src="/js/game.js"></script>
+<script>
+const { U } = OpenWiiGame;
+const FRUITS = [
+  { name: 'melancia', r: 52, skin: '#2f9e3f', stripe: '#1d6e2a', inner: '#ff3b4f', rim: '#f6ffe6', juice: '#ff3b4f', seeds: true },
+  { name: 'laranja', r: 38, skin: '#ff9a1f', inner: '#ffc457', rim: '#fff1cf', juice: '#ffa62b' },
+  { name: 'maçã', r: 36, skin: '#e6283c', inner: '#fff3c9', rim: '#fffbe9', juice: '#ffe9a8', stem: true },
+  { name: 'limão', r: 34, skin: '#d8e82a', inner: '#f4ff9c', rim: '#fbffe0', juice: '#e8f55a' },
+  { name: 'pêssego', r: 36, skin: '#ff9e7a', inner: '#ffd27a', rim: '#fff0d0', juice: '#ffb36b' },
+  { name: 'coco', r: 40, skin: '#7a4a2a', inner: '#ffffff', rim: '#f2efe8', juice: '#f8f8f8' },
+];
+
+let fruits = [], halves = [], particles = [], splats = [], texts = [];
+let score = 0, lives = 3, best = U.best('fruit'), spawnT = 0, elapsed = 0, over = false;
+const blades = new Map(); // id -> { x, y, trail: [], slicedAt, combo }
+let wood = null;
+
+const G = OpenWiiGame.create({ cursor: 'hand', playCursor: false, onResize: buildWood });
+
+function buildWood(W, H) {
+  wood = document.createElement('canvas');
+  wood.width = W; wood.height = H;
+  const c = wood.getContext('2d');
+  const planks = 7, pw = W / planks;
+  for (let i = 0; i < planks; i++) {
+    const base = [176, 112, 62].map((v) => v + U.randi(-14, 14));
+    const g = c.createLinearGradient(i * pw, 0, (i + 1) * pw, 0);
+    g.addColorStop(0, `rgb(${base.map((v) => v - 22)})`);
+    g.addColorStop(0.5, `rgb(${base})`);
+    g.addColorStop(1, `rgb(${base.map((v) => v - 30)})`);
+    c.fillStyle = g;
+    c.fillRect(i * pw, 0, pw, H);
+    c.strokeStyle = 'rgba(70,35,10,.18)';
+    c.lineWidth = 1.5;
+    for (let k = 0; k < 12; k++) {
+      const x = i * pw + U.rand(8, pw - 8);
+      c.beginPath();
+      c.moveTo(x, 0);
+      for (let y = 0; y <= H; y += 40) c.lineTo(x + Math.sin(y / 90 + k) * 6, y);
+      c.stroke();
+    }
+    c.fillStyle = 'rgba(50,25,8,.55)';
+    c.fillRect((i + 1) * pw - 3, 0, 4, H);
+  }
+  const v = c.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H);
+  v.addColorStop(0, 'rgba(0,0,0,0)');
+  v.addColorStop(1, 'rgba(0,0,0,.45)');
+  c.fillStyle = v;
+  c.fillRect(0, 0, W, H);
+}
+
+function gravity() { return G.H * 1.25; }
+
+function spawnWave() {
+  const n = Math.min(1 + Math.floor(elapsed / 15) + U.randi(0, 2), 6);
+  for (let i = 0; i < n; i++) {
+    const bombChance = Math.min(0.08 + elapsed / 400, 0.22);
+    const isBomb = Math.random() < bombChance && elapsed > 5;
+    const type = isBomb ? null : U.pick(FRUITS);
+    const r = isBomb ? 36 : type.r;
+    const x = U.rand(G.W * 0.18, G.W * 0.82);
+    const h = U.rand(G.H * 0.55, G.H * 0.9);
+    fruits.push({
+      type, bomb: isBomb, r, x, y: G.H + r + U.rand(0, 60),
+      vx: (G.W / 2 - x) * U.rand(0.15, 0.45) + U.rand(-60, 60),
+      vy: -Math.sqrt(2 * gravity() * h),
+      a: U.rand(0, 6.28), va: U.rand(-3, 3),
+    });
+  }
+}
+
+function reset() {
+  fruits = []; halves = []; particles = []; splats = []; texts = [];
+  score = 0; lives = 3; spawnT = 0.6; elapsed = 0; over = false;
+  blades.clear();
+  G.wii.sfx.start();
+}
+
+function sliceFruit(f, angle, blade) {
+  f.dead = true;
+  if (f.bomb) return explode(f);
+  G.wii.sfx.slice();
+  setTimeout(() => G.wii.sfx.splat(), 30);
+  const nx = Math.cos(angle + Math.PI / 2), ny = Math.sin(angle + Math.PI / 2);
+  for (const s of [1, -1]) {
+    halves.push({ type: f.type, r: f.r, x: f.x, y: f.y, vx: f.vx + nx * 140 * s, vy: f.vy * 0.4 + ny * 140 * s - 60, a: angle, va: s * U.rand(2, 5), side: s, life: 3 });
+  }
+  for (let i = 0; i < 18; i++) {
+    const a = U.rand(0, 6.28), sp = U.rand(80, 420);
+    particles.push({ x: f.x, y: f.y, vx: Math.cos(a) * sp + f.vx * 0.3, vy: Math.sin(a) * sp - 120, r: U.rand(3, 8), c: f.type.juice, life: U.rand(0.4, 0.9) });
+  }
+  splats.push({ x: f.x, y: f.y, r: f.r * U.rand(1.1, 1.6), c: f.type.juice, a: U.rand(0, 6.28), life: 4, seed: Math.random() });
+  score += 1;
+  blade.combo.push({ x: f.x, y: f.y });
+  G.wii.rumble(blade.id, 25);
+}
+
+function explode(f) {
+  G.wii.sfx.boom();
+  G.rumbleAll(400);
+  for (let i = 0; i < 60; i++) {
+    const a = U.rand(0, 6.28), sp = U.rand(100, 900);
+    particles.push({ x: f.x, y: f.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: U.rand(4, 12), c: U.pick(['#fff', '#ffd23f', '#ff7a1f', '#555']), life: U.rand(0.5, 1.4) });
+  }
+  flash = 1;
+  gameOver('💣 Você cortou uma bomba!');
+}
+
+let flash = 0;
+function gameOver(reason) {
+  if (over) return;
+  over = true;
+  const rec = U.saveBest('fruit', score);
+  best = Math.max(best, score);
+  setTimeout(() => {
+    G.wii.sfx.over();
+    G.menu({
+      title: 'Fim de jogo',
+      text: reason,
+      html: `<div class="big">${score}</div><p>${rec ? '🏆 Novo recorde!' : `Recorde: ${best}`}</p>`,
+      primary: 'Jogar de novo',
+      onPrimary: reset,
+    });
+  }, 900);
+}
+
+function update(dt) {
+  if (!G.playing) return;
+  elapsed += dt;
+  const g = gravity();
+
+  if (!over) {
+    spawnT -= dt;
+    if (spawnT <= 0) {
+      spawnWave();
+      spawnT = Math.max(0.75, 1.9 - elapsed / 60);
+    }
+  }
+
+  // lâminas (uma por jogador)
+  for (const p of G.players()) {
+    let b = blades.get(p.id);
+    if (!b) { b = { id: p.id, x: p.x, y: p.y, trail: [], combo: [], comboT: 0, color: p.color }; blades.set(p.id, b); }
+    const dx = p.x - b.x, dy = p.y - b.y;
+    const speed = Math.hypot(dx, dy) / Math.max(dt, 0.001);
+    const active = speed > 700;
+    if (active && !over) {
+      const ang = Math.atan2(dy, dx);
+      for (const f of fruits) {
+        if (!f.dead && U.segDist(f.x, f.y, b.x, b.y, p.x, p.y) < f.r) sliceFruit(f, ang, b);
+      }
+      if (b.trail.length === 0 || speed > 900) { if (Math.random() < 0.15) G.wii.sfx.slice(); }
+    }
+    b.trail.push({ x: p.x, y: p.y, t: elapsed, on: active });
+    while (b.trail.length && elapsed - b.trail[0].t > 0.18) b.trail.shift();
+    b.x = p.x; b.y = p.y;
+
+    // combos: várias frutas no mesmo golpe
+    if (b.combo.length) {
+      b.comboT += dt;
+      if (!active || b.comboT > 0.35) {
+        if (b.combo.length >= 3) {
+          const bonus = b.combo.length;
+          score += bonus;
+          const c = b.combo[b.combo.length - 1];
+          texts.push({ x: c.x, y: c.y, s: `${b.combo.length} frutas! +${bonus}`, life: 1.2, c: '#ffe14d' });
+          G.wii.sfx.coin();
+        }
+        b.combo = []; b.comboT = 0;
+      }
+    }
+  }
+  for (const id of blades.keys()) if (!G.wii.players.has(id)) blades.delete(id);
+
+  for (const f of fruits) {
+    f.vy += g * dt; f.x += f.vx * dt; f.y += f.vy * dt; f.a += f.va * dt;
+    if (!f.dead && f.vy > 0 && f.y > G.H + f.r + 10) {
+      f.dead = true;
+      if (!f.bomb && !over) {
+        lives--;
+        G.wii.sfx.bad();
+        texts.push({ x: U.clamp(f.x, 60, G.W - 60), y: G.H - 60, s: '✖', life: 1, c: '#ff4040' });
+        if (lives <= 0) gameOver('Você deixou cair 3 frutas.');
+      }
+    }
+  }
+  fruits = fruits.filter((f) => !f.dead);
+  for (const h of halves) { h.vy += g * dt; h.x += h.vx * dt; h.y += h.vy * dt; h.a += h.va * dt; h.life -= dt; }
+  halves = halves.filter((h) => h.life > 0 && h.y < G.H + 120);
+  for (const q of particles) { q.vy += g * 0.6 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; }
+  particles = particles.filter((q) => q.life > 0);
+  for (const s of splats) s.life -= dt;
+  splats = splats.filter((s) => s.life > 0);
+  for (const t of texts) { t.life -= dt; t.y -= 40 * dt; }
+  texts = texts.filter((t) => t.life > 0);
+  flash = Math.max(0, flash - dt * 1.5);
+}
+
+function drawFruitWhole(c, f) {
+  const t = f.type;
+  c.save();
+  c.translate(f.x, f.y);
+  c.rotate(f.a);
+  if (f.bomb) {
+    c.fillStyle = '#23262b';
+    c.beginPath(); c.arc(0, 0, f.r, 0, 7); c.fill();
+    c.fillStyle = 'rgba(255,255,255,.18)';
+    c.beginPath(); c.arc(-f.r * 0.35, -f.r * 0.35, f.r * 0.35, 0, 7); c.fill();
+    c.fillStyle = '#4a4d52'; c.fillRect(-8, -f.r - 10, 16, 14);
+    c.strokeStyle = '#c9a26b'; c.lineWidth = 3;
+    c.beginPath(); c.moveTo(0, -f.r - 10); c.quadraticCurveTo(12, -f.r - 24, 6, -f.r - 32); c.stroke();
+    const sp = 6 + Math.random() * 6;
+    c.fillStyle = Math.random() < 0.5 ? '#ffd23f' : '#ff6a1f';
+    c.beginPath(); c.arc(6, -f.r - 32, sp / 2, 0, 7); c.fill();
+    c.strokeStyle = '#ff3030'; c.lineWidth = 4; c.font = '900 28px system-ui'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillStyle = '#ff4545'; c.fillText('✖', 0, 2);
+    c.restore();
+    return;
+  }
+  const g = c.createRadialGradient(-f.r * 0.35, -f.r * 0.35, f.r * 0.1, 0, 0, f.r);
+  g.addColorStop(0, lighten(t.skin, 50));
+  g.addColorStop(1, t.skin);
+  c.fillStyle = g;
+  c.beginPath();
+  if (t.name === 'limão') c.ellipse(0, 0, f.r * 1.15, f.r * 0.85, 0, 0, 7);
+  else c.arc(0, 0, f.r, 0, 7);
+  c.fill();
+  if (t.stripe) {
+    c.strokeStyle = t.stripe; c.lineWidth = 6;
+    for (let i = -2; i <= 2; i++) {
+      c.beginPath(); c.ellipse(0, 0, Math.abs(i) * f.r * 0.22 + 4, f.r - 2, 0, 0, 7); c.stroke();
+    }
+  }
+  if (t.name === 'coco') {
+    c.fillStyle = 'rgba(0,0,0,.25)';
+    for (let i = 0; i < 3; i++) { c.beginPath(); c.arc(Math.cos(i * 2.1) * 10, Math.sin(i * 2.1) * 10 - 6, 4, 0, 7); c.fill(); }
+  }
+  if (t.stem) {
+    c.strokeStyle = '#5a3a1a'; c.lineWidth = 4;
+    c.beginPath(); c.moveTo(0, -f.r + 4); c.lineTo(3, -f.r - 10); c.stroke();
+    c.fillStyle = '#3fb54a';
+    c.beginPath(); c.ellipse(12, -f.r - 6, 10, 5, -0.5, 0, 7); c.fill();
+  }
+  c.fillStyle = 'rgba(255,255,255,.35)';
+  c.beginPath(); c.ellipse(-f.r * 0.4, -f.r * 0.45, f.r * 0.22, f.r * 0.12, -0.6, 0, 7); c.fill();
+  c.restore();
+}
+
+function drawHalf(c, h) {
+  const t = h.type;
+  c.save();
+  c.translate(h.x, h.y);
+  c.rotate(h.a);
+  c.globalAlpha = Math.min(1, h.life);
+  c.beginPath();
+  if (h.side > 0) c.arc(0, 0, h.r, 0, Math.PI); else c.arc(0, 0, h.r, Math.PI, Math.PI * 2);
+  c.closePath();
+  c.fillStyle = t.skin; c.fill();
+  c.beginPath();
+  if (h.side > 0) c.arc(0, 0, h.r * 0.88, 0, Math.PI); else c.arc(0, 0, h.r * 0.88, Math.PI, Math.PI * 2);
+  c.closePath();
+  c.fillStyle = t.rim; c.fill();
+  c.beginPath();
+  if (h.side > 0) c.arc(0, 0, h.r * 0.78, 0, Math.PI); else c.arc(0, 0, h.r * 0.78, Math.PI, Math.PI * 2);
+  c.closePath();
+  c.fillStyle = t.inner; c.fill();
+  if (t.seeds) {
+    c.fillStyle = '#222';
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI + 0.25;
+      c.beginPath(); c.ellipse(Math.cos(a) * h.r * 0.45, Math.sin(a) * h.r * 0.45 * h.side, 3, 5, a, 0, 7); c.fill();
+    }
+  }
+  c.restore();
+}
+
+function lighten(hex, amt) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.min(255, (n >> 16) + amt), g = Math.min(255, ((n >> 8) & 255) + amt), b = Math.min(255, (n & 255) + amt);
+  return `rgb(${r},${g},${b})`;
+}
+
+function draw() {
+  const c = G.ctx;
+  if (wood) c.drawImage(wood, 0, 0, G.W, G.H);
+
+  for (const s of splats) {
+    c.save();
+    c.globalAlpha = Math.min(0.55, s.life / 4);
+    c.fillStyle = s.c;
+    c.translate(s.x, s.y); c.rotate(s.a);
+    c.beginPath();
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2;
+      const rr = s.r * (0.6 + 0.4 * Math.abs(Math.sin(i * 3.7 + s.seed * 10)));
+      i ? c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : c.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
+    }
+    c.fill();
+    c.restore();
+  }
+  for (const h of halves) drawHalf(c, h);
+  for (const f of fruits) drawFruitWhole(c, f);
+  for (const q of particles) {
+    c.globalAlpha = Math.min(1, q.life * 2);
+    c.fillStyle = q.c;
+    c.beginPath(); c.arc(q.x, q.y, q.r, 0, 7); c.fill();
+  }
+  c.globalAlpha = 1;
+
+  // rastro da espada
+  for (const b of blades.values()) {
+    const tr = b.trail;
+    if (tr.length > 1) {
+      for (let i = 1; i < tr.length; i++) {
+        const k = i / tr.length;
+        c.strokeStyle = tr[i].on ? `rgba(255,255,255,${k})` : `rgba(255,255,255,${k * 0.25})`;
+        c.lineWidth = (tr[i].on ? 14 : 5) * k + 1;
+        c.lineCap = 'round';
+        c.beginPath(); c.moveTo(tr[i - 1].x, tr[i - 1].y); c.lineTo(tr[i].x, tr[i].y); c.stroke();
+      }
+      const last = tr[tr.length - 1];
+      if (last.on) {
+        c.shadowColor = b.color; c.shadowBlur = 20;
+        c.strokeStyle = b.color; c.lineWidth = 3;
+        c.beginPath(); c.moveTo(tr[0].x, tr[0].y);
+        for (const pt of tr) c.lineTo(pt.x, pt.y);
+        c.stroke();
+        c.shadowBlur = 0;
+      }
+    }
+    c.fillStyle = b.color;
+    c.beginPath(); c.arc(b.x, b.y, 6, 0, 7); c.fill();
+    c.strokeStyle = '#fff'; c.lineWidth = 2; c.stroke();
+  }
+
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  for (const t of texts) {
+    c.globalAlpha = Math.min(1, t.life * 1.5);
+    c.font = '900 32px system-ui';
+    c.lineWidth = 6; c.strokeStyle = 'rgba(0,0,0,.6)'; c.strokeText(t.s, t.x, t.y);
+    c.fillStyle = t.c; c.fillText(t.s, t.x, t.y);
+  }
+  c.globalAlpha = 1;
+  if (flash > 0) { c.fillStyle = `rgba(255,255,255,${flash})`; c.fillRect(0, 0, G.W, G.H); }
+
+  G.hudL.innerHTML = `🍉 ${score}<div class="sub">Recorde: ${best}</div>`;
+  G.hudR.innerHTML = `<span style="color:#ff4040">${'✖'.repeat(3 - lives)}</span><span style="opacity:.35">${'✖'.repeat(Math.max(0, lives))}</span>`;
+}
+
+G.loop((dt) => { update(dt); draw(); });
+G.menu({
+  title: '🍉 Fruit Ninja',
+  text: 'O celular é a sua espada. Corte as frutas, fuja das bombas!',
+  how: [['Mover', 'Balance o celular rápido para cortar'], ['💣', 'Não corte as bombas'], ['✖', 'Deixar cair 3 frutas = fim'], ['⌂', 'Voltar ao menu']],
+  primary: 'Jogar',
+  onPrimary: reset,
+});
+</script>
+</body>
+</html>

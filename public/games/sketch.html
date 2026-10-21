@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sketch · OpenWii</title>
+<style>
+  .tools{position:fixed;left:18px;top:50%;transform:translateY(-50%);display:grid;grid-template-columns:repeat(2,42px);gap:8px;z-index:6;background:rgba(255,255,255,.92);
+    padding:14px 10px;border-radius:22px;box-shadow:0 10px 30px rgba(0,0,0,.15)}
+  .tools button{width:42px;height:42px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 1px #d5dbe1;font-size:20px;background:#f1f3f5;transition:transform .12s}
+  .tools button.wii-hover,.tools button:hover{transform:scale(1.18)}
+  .tools button.sel{box-shadow:0 0 0 3px #2b3642}
+  .tools hr{grid-column:1/-1;border:none;border-top:1px solid #e3e7eb;margin:2px 0;width:100%}
+  .hud{color:#2b3642!important;text-shadow:none!important}
+</style>
+</head>
+<body>
+<div class="tools" id="tools"></div>
+<script src="/js/wii.js"></script>
+<script src="/js/game.js"></script>
+<script>
+const { U } = OpenWiiGame;
+const COLORS = ['#1d2733', '#ff4d5e', '#ff9f1a', '#ffd23f', '#3ad16b', '#2aa7ff', '#9c6cff', '#ff6bd5', '#8b5a2b'];
+const SIZES = [4, 10, 22];
+let paper = null, pctx = null;
+let clicker = null;
+const brushes = new Map(); // id -> { color, size, erase, drawing, last }
+
+function brush(p) {
+  if (!brushes.has(p.id)) brushes.set(p.id, { color: COLORS[[0, 1, 5, 4][(p.n - 1) % 4]], size: 1, erase: false, drawing: false, last: null });
+  return brushes.get(p.id);
+}
+
+function makePaper(W, H) {
+  const old = paper;
+  paper = document.createElement('canvas');
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  paper.width = W * dpr; paper.height = H * dpr;
+  pctx = paper.getContext('2d');
+  pctx.scale(dpr, dpr);
+  pctx.lineCap = 'round'; pctx.lineJoin = 'round';
+  if (old) pctx.drawImage(old, 0, 0, W, H);
+}
+
+const G = OpenWiiGame.create({
+  cursor: 'hand',
+  pausable: false,
+  onResize: makePaper,
+  onButton(p, btn, down) {
+    clicker = p;
+    const b = brush(p);
+    const overTools = document.elementsFromPoint(p.x, p.y).some((e) => e.closest && e.closest('#tools'));
+    if (btn === 'A' || btn === 'B') {
+      if (down && !overTools) { b.drawing = true; b.last = { x: p.x, y: p.y }; b.forceErase = btn === 'B'; dot(p, b); }
+      if (!down) { b.drawing = false; b.last = null; }
+    }
+    if (!down) return;
+    if (btn === 'RIGHT' || btn === 'LEFT') {
+      const i = COLORS.indexOf(b.color);
+      b.color = COLORS[(i + (btn === 'RIGHT' ? 1 : -1) + COLORS.length) % COLORS.length];
+      b.erase = false; G.wii.sfx.hover(); renderTools();
+    }
+    if (btn === 'UP') { b.size = Math.min(2, b.size + 1); renderTools(); }
+    if (btn === 'DOWN') { b.size = Math.max(0, b.size - 1); renderTools(); }
+    if (btn === 'MINUS') { b.erase = !b.erase; renderTools(); }
+    if (btn === 'ONE') clearPaper();
+    if (btn === 'TWO') save();
+  },
+});
+
+function strokeStyle(b) {
+  const erase = b.erase || b.forceErase;
+  pctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
+  pctx.strokeStyle = pctx.fillStyle = b.color;
+  pctx.lineWidth = SIZES[b.size] * (erase ? 2.5 : 1);
+}
+function dot(p, b) {
+  strokeStyle(b);
+  pctx.beginPath(); pctx.arc(p.x, p.y, pctx.lineWidth / 2, 0, 7); pctx.fill();
+  pctx.globalCompositeOperation = 'source-over';
+}
+function clearPaper() {
+  pctx.clearRect(0, 0, G.W, G.H);
+  G.wii.sfx.slice();
+}
+function save() {
+  const out = document.createElement('canvas');
+  out.width = paper.width; out.height = paper.height;
+  const c = out.getContext('2d');
+  c.fillStyle = '#fffdf7'; c.fillRect(0, 0, out.width, out.height);
+  c.drawImage(paper, 0, 0);
+  const a = document.createElement('a');
+  a.download = `openwii-desenho-${Date.now()}.png`;
+  a.href = out.toDataURL('image/png');
+  a.click();
+  G.wii.toast('Desenho salvo 💾');
+  G.wii.sfx.coin();
+}
+
+function renderTools() {
+  const b = clicker ? brush(clicker) : null;
+  const el = document.getElementById('tools');
+  el.innerHTML = '';
+  for (const col of COLORS) {
+    const btn = document.createElement('button');
+    btn.style.background = col;
+    btn.dataset.wii = '';
+    if (b && !b.erase && b.color === col) btn.classList.add('sel');
+    btn.onclick = () => { if (!clicker) return; const bb = brush(clicker); bb.color = col; bb.erase = false; renderTools(); };
+    el.appendChild(btn);
+  }
+  el.appendChild(document.createElement('hr'));
+  SIZES.forEach((s, i) => {
+    const btn = document.createElement('button');
+    btn.dataset.wii = '';
+    btn.innerHTML = `<span style="display:inline-block;width:${s}px;height:${s}px;border-radius:50%;background:#2b3642"></span>`;
+    if (b && b.size === i) btn.classList.add('sel');
+    btn.onclick = () => { if (clicker) { brush(clicker).size = i; renderTools(); } };
+    el.appendChild(btn);
+  });
+  el.appendChild(document.createElement('hr'));
+  const tools = [['🧽', 'Borracha', () => { const bb = brush(clicker); bb.erase = !bb.erase; renderTools(); }, b && b.erase],
+    ['🗑', 'Limpar', clearPaper], ['💾', 'Salvar', save]];
+  for (const [ic, title, fn, sel] of tools) {
+    const btn = document.createElement('button');
+    btn.dataset.wii = ''; btn.title = title; btn.textContent = ic;
+    if (sel) btn.classList.add('sel');
+    btn.onclick = () => clicker && fn();
+    el.appendChild(btn);
+  }
+}
+
+function update() {
+  for (const p of G.players()) {
+    const b = brushes.get(p.id);
+    if (!b || !b.drawing || !b.last) continue;
+    strokeStyle(b);
+    pctx.beginPath();
+    pctx.moveTo(b.last.x, b.last.y);
+    const mx = (b.last.x + p.x) / 2, my = (b.last.y + p.y) / 2;
+    pctx.quadraticCurveTo(b.last.x, b.last.y, mx, my);
+    pctx.lineTo(p.x, p.y);
+    pctx.stroke();
+    pctx.globalCompositeOperation = 'source-over';
+    b.last = { x: p.x, y: p.y };
+  }
+}
+
+function draw() {
+  const c = G.ctx;
+  c.fillStyle = '#fffdf7'; c.fillRect(0, 0, G.W, G.H);
+  c.strokeStyle = 'rgba(42,167,255,.12)'; c.lineWidth = 1;
+  for (let y = 40; y < G.H; y += 32) { c.beginPath(); c.moveTo(0, y); c.lineTo(G.W, y); c.stroke(); }
+  c.drawImage(paper, 0, 0, G.W, G.H);
+  // anel do pincel para cada jogador
+  for (const p of G.players()) {
+    const b = brush(p);
+    const r = SIZES[b.size] * (b.erase ? 2.5 : 1) / 2 + 2;
+    c.strokeStyle = b.erase ? '#999' : b.color; c.lineWidth = 2;
+    c.beginPath(); c.arc(p.x, p.y, r, 0, 7); c.stroke();
+  }
+  G.hudR.innerHTML = '<div class="sub">A desenhar · B apagar · ◀▶ cor · ▲▼ tamanho · 1 limpar · 2 salvar</div>';
+}
+
+G.loop(() => { update(); draw(); });
+G.wii.on('join', renderTools);
+clicker = G.players()[0] || null;
+renderTools();
+G.menu({
+  title: '🎨 Sketch',
+  text: 'Desenhe na tela apontando o celular. Cada jogador tem o seu pincel!',
+  how: [['A (segurar)', 'Desenhar'], ['B (segurar)', 'Apagar'], ['◀ ▶', 'Trocar cor'], ['▲ ▼', 'Tamanho do pincel'], ['1 / 2', 'Limpar / Salvar PNG']],
+  primary: 'Desenhar',
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shooting Range · OpenWii</title>
+</head>
+<body>
+<script src="/js/wii.js"></script>
+<script src="/js/game.js"></script>
+<script>
+const { U } = OpenWiiGame;
+const ROUND = 60, AMMO = 8;
+let targets = [], holes = [], particles = [], texts = [];
+let timeLeft = ROUND, spawnT = 0, running = false, t = 0;
+const stats = new Map(); // id -> { score, ammo, shots, hits }
+
+function stat(p) {
+  if (!stats.has(p.id)) stats.set(p.id, { score: 0, ammo: AMMO, shots: 0, hits: 0, color: p.color, n: p.n });
+  return stats.get(p.id);
+}
+
+const G = OpenWiiGame.create({
+  cursor: 'crosshair',
+  onButton(p, btn, down) {
+    if (!down || !running) return;
+    if (btn === 'A') shoot(p);
+    if (btn === 'B' || btn === 'DOWN') reload(p);
+  },
+});
+
+function reload(p) {
+  const s = stat(p);
+  if (s.ammo === AMMO) return;
+  s.ammo = AMMO;
+  G.wii.sfx.reload();
+  G.wii.rumble(p.id, 30);
+}
+
+function shoot(p) {
+  const s = stat(p);
+  // apontar para fora da tela + A também recarrega (como no Wii)
+  if (p.x < 4 || p.y < 4 || p.x > G.W - 4 || p.y > G.H - 4) return reload(p);
+  if (s.ammo <= 0) { G.wii.sfx.empty(); texts.push({ x: p.x, y: p.y - 40, s: 'B para recarregar', life: 0.8, c: '#fff' }); return; }
+  s.ammo--; s.shots++;
+  G.wii.sfx.shoot();
+  G.wii.rumble(p.id, 50);
+  flashes.push({ x: p.x, y: p.y, life: 0.08, c: p.color });
+  // do alvo mais "à frente" para o de trás
+  for (let i = targets.length - 1; i >= 0; i--) {
+    const tg = targets[i];
+    if (tg.dead || tg.scale < 0.6) continue;
+    const dx = p.x - tg.x, dy = p.y - tg.y;
+    const d = Math.hypot(dx, dy) / (tg.r * tg.scale);
+    if (d <= 1) {
+      const pts = tg.kind === 'disc' ? 150 : d < 0.2 ? 100 : d < 0.45 ? 50 : d < 0.7 ? 25 : 10;
+      s.score += pts; s.hits++;
+      tg.holes.push({ dx: dx / tg.scale, dy: dy / tg.scale });
+      tg.hp--;
+      if (tg.hp <= 0 || tg.kind === 'disc') { tg.dead = true; tg.fall = 0; }
+      texts.push({ x: tg.x, y: tg.y - tg.r - 10, s: (pts === 100 ? 'NA MOSCA! ' : '') + '+' + pts, life: 1, c: pts >= 100 ? '#ffd23f' : '#fff' });
+      G.wii.sfx.hit();
+      for (let k = 0; k < 12; k++) particles.push({ x: p.x, y: p.y, vx: U.rand(-200, 200), vy: U.rand(-250, 50), r: U.rand(2, 5), c: tg.kind === 'disc' ? '#ff7a1f' : '#f3e6c8', life: U.rand(0.3, 0.7) });
+      return;
+    }
+  }
+  holes.push({ x: p.x, y: p.y, life: 6 });
+}
+let flashes = [];
+
+function spawnTarget() {
+  const r = Math.random();
+  const lanes = [G.H * 0.3, G.H * 0.5, G.H * 0.68];
+  if (r < 0.45) {
+    targets.push({ kind: 'pop', x: U.rand(G.W * 0.1, G.W * 0.9), y: U.pick(lanes), r: U.rand(42, 60), scale: 0, life: U.rand(2.2, 3.5), hp: 2, holes: [] });
+  } else if (r < 0.85) {
+    const dir = Math.random() < 0.5 ? 1 : -1;
+    targets.push({ kind: 'slide', x: dir > 0 ? -60 : G.W + 60, y: U.pick(lanes), vx: dir * U.rand(160, 320), r: U.rand(36, 50), scale: 1, life: 99, hp: 2, holes: [] });
+  } else {
+    const dir = Math.random() < 0.5 ? 1 : -1;
+    targets.push({ kind: 'disc', x: dir > 0 ? -30 : G.W + 30, y: G.H * 0.8, vx: dir * U.rand(350, 520), vy: -U.rand(G.H * 0.8, G.H * 1.05), r: 26, scale: 1, life: 99, hp: 1, holes: [] });
+  }
+}
+
+function start() {
+  targets = []; holes = []; particles = []; texts = []; flashes = [];
+  stats.clear();
+  for (const p of G.players()) stat(p);
+  timeLeft = ROUND; spawnT = 0.5; running = true;
+  G.wii.sfx.start();
+}
+
+function end() {
+  running = false;
+  const list = [...stats.values()].sort((a, b) => b.score - a.score);
+  const top = list[0] ? list[0].score : 0;
+  const rec = U.saveBest('shooting', top);
+  G.wii.sfx.over();
+  const rows = list.map((s) => `<p><b style="color:${s.color}">Jogador ${s.n}</b> — ${s.score} pts · precisão ${s.shots ? Math.round((s.hits / s.shots) * 100) : 0}%</p>`).join('');
+  G.menu({
+    title: 'Tempo esgotado!', html: `<div class="big">${top}</div>${rows}<p>${rec ? '🏆 Novo recorde!' : `Recorde: ${U.best('shooting')}`}</p>`,
+    primary: 'Jogar de novo', onPrimary: start,
+  });
+}
+
+function update(dt) {
+  t += dt;
+  if (!running || !G.playing) return;
+  timeLeft -= dt;
+  if (timeLeft <= 0) return end();
+  spawnT -= dt;
+  if (spawnT <= 0) { spawnTarget(); spawnT = U.rand(0.5, 1.1) * (0.6 + timeLeft / ROUND * 0.4); }
+  const g = G.H * 1.2;
+  for (const tg of targets) {
+    if (tg.dead) { tg.fall += dt * 5; continue; }
+    if (tg.kind === 'pop') {
+      tg.life -= dt;
+      tg.scale = tg.life > 0.25 ? Math.min(1, tg.scale + dt * 6) : Math.max(0, tg.life * 4);
+      if (tg.life <= 0) tg.gone = true;
+    } else if (tg.kind === 'slide') {
+      tg.x += tg.vx * dt;
+      if (tg.x < -100 || tg.x > G.W + 100) tg.gone = true;
+    } else {
+      tg.vy += g * dt; tg.x += tg.vx * dt; tg.y += tg.vy * dt;
+      if (tg.y > G.H + 60) tg.gone = true;
+    }
+  }
+  targets = targets.filter((tg) => !tg.gone && !(tg.dead && tg.fall > 1.2));
+  for (const q of particles) { q.vy += 600 * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; }
+  particles = particles.filter((q) => q.life > 0);
+  for (const h of holes) h.life -= dt;
+  holes = holes.filter((h) => h.life > 0);
+  for (const x of texts) { x.life -= dt; x.y -= 50 * dt; }
+  texts = texts.filter((x) => x.life > 0);
+  for (const f of flashes) f.life -= dt;
+  flashes = flashes.filter((f) => f.life > 0);
+}
+
+function drawTarget(c, tg) {
+  c.save();
+  c.translate(tg.x, tg.y);
+  if (tg.kind === 'disc') {
+    c.rotate(t * 10);
+    c.fillStyle = '#ff7a1f';
+    c.beginPath(); c.ellipse(0, 0, tg.r, tg.r * 0.45, 0, 0, 7); c.fill();
+    c.fillStyle = '#c94f00';
+    c.beginPath(); c.ellipse(0, 0, tg.r * 0.5, tg.r * 0.2, 0, 0, 7); c.fill();
+    c.restore();
+    return;
+  }
+  // haste
+  if (tg.kind !== 'disc') {
+    c.fillStyle = '#6b4a2b';
+    c.fillRect(-5, 0, 10, G.H);
+  }
+  const sx = tg.dead ? Math.max(0.02, Math.cos(Math.min(tg.fall, 1.5))) : 1;
+  c.scale(tg.scale, tg.scale * sx);
+  const rings = ['#ffffff', '#1d2733', '#2aa7ff', '#ff4d5e', '#ffd23f'];
+  const rs = [1, 0.85, 0.7, 0.45, 0.2];
+  for (let i = 0; i < rings.length; i++) {
+    c.fillStyle = rings[i];
+    c.beginPath(); c.arc(0, 0, tg.r * rs[i], 0, 7); c.fill();
+  }
+  c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 2;
+  c.beginPath(); c.arc(0, 0, tg.r, 0, 7); c.stroke();
+  for (const h of tg.holes) {
+    c.fillStyle = '#111';
+    c.beginPath(); c.arc(h.dx, h.dy, 5, 0, 7); c.fill();
+    c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 2;
+    c.beginPath(); c.arc(h.dx, h.dy, 8, 0, 7); c.stroke();
+  }
+  c.restore();
+}
+
+function draw() {
+  const c = G.ctx;
+  const bg = c.createLinearGradient(0, 0, 0, G.H);
+  bg.addColorStop(0, '#203a2c'); bg.addColorStop(0.75, '#2f5640'); bg.addColorStop(0.75, '#7a5233'); bg.addColorStop(1, '#4e3320');
+  c.fillStyle = bg; c.fillRect(0, 0, G.W, G.H);
+  // fardos de feno / paredes laterais
+  c.fillStyle = 'rgba(0,0,0,.18)';
+  for (let x = 0; x < G.W; x += 120) c.fillRect(x, 0, 4, G.H * 0.75);
+  // luzes
+  for (let i = 0; i < 6; i++) {
+    const x = (i + 0.5) * G.W / 6;
+    const lg = c.createRadialGradient(x, 0, 0, x, 0, G.H * 0.5);
+    lg.addColorStop(0, 'rgba(255,240,200,.25)'); lg.addColorStop(1, 'rgba(255,240,200,0)');
+    c.fillStyle = lg; c.fillRect(x - G.H * 0.5, 0, G.H, G.H * 0.5);
+  }
+  // trilhos
+  c.fillStyle = 'rgba(0,0,0,.35)';
+  for (const y of [0.3, 0.5, 0.68]) c.fillRect(0, G.H * y + 70, G.W, 6);
+
+  for (const tg of targets) if (tg.kind !== 'disc') drawTarget(c, tg);
+  // balcão
+  c.fillStyle = '#5a3a20'; c.fillRect(0, G.H * 0.86, G.W, G.H * 0.14);
+  c.fillStyle = '#7a5233'; c.fillRect(0, G.H * 0.86, G.W, 10);
+  for (const tg of targets) if (tg.kind === 'disc') drawTarget(c, tg);
+
+  for (const h of holes) {
+    c.globalAlpha = Math.min(1, h.life);
+    c.fillStyle = '#0b0b0b';
+    c.beginPath(); c.arc(h.x, h.y, 4, 0, 7); c.fill();
+  }
+  c.globalAlpha = 1;
+  for (const q of particles) { c.globalAlpha = Math.min(1, q.life * 2); c.fillStyle = q.c; c.beginPath(); c.arc(q.x, q.y, q.r, 0, 7); c.fill(); }
+  for (const f of flashes) {
+    c.globalAlpha = f.life * 10;
+    c.fillStyle = '#fff6c0';
+    c.beginPath(); c.arc(f.x, f.y, 28, 0, 7); c.fill();
+  }
+  c.globalAlpha = 1;
+  c.textAlign = 'center'; c.font = '900 26px system-ui';
+  for (const x of texts) {
+    c.globalAlpha = Math.min(1, x.life * 2);
+    c.lineWidth = 5; c.strokeStyle = 'rgba(0,0,0,.5)'; c.strokeText(x.s, x.x, x.y);
+    c.fillStyle = x.c; c.fillText(x.s, x.x, x.y);
+  }
+  c.globalAlpha = 1;
+
+  // HUD por jogador (no balcão)
+  const list = [...stats.values()];
+  list.forEach((s, i) => {
+    const w = Math.min(300, G.W / Math.max(list.length, 1) - 20);
+    const x = 20 + i * (w + 20), y = G.H * 0.86 + 20;
+    c.fillStyle = 'rgba(0,0,0,.35)';
+    c.beginPath(); c.roundRect(x, y, w, 64, 14); c.fill();
+    c.fillStyle = s.color; c.font = '800 16px system-ui'; c.textAlign = 'left';
+    c.fillText(`Jogador ${s.n}`, x + 14, y + 24);
+    c.fillStyle = '#fff'; c.font = '900 24px system-ui';
+    c.fillText(s.score, x + 14, y + 52);
+    for (let k = 0; k < AMMO; k++) {
+      c.fillStyle = k < s.ammo ? '#ffd23f' : 'rgba(255,255,255,.2)';
+      c.beginPath(); c.roundRect(x + w - 16 - (AMMO - k) * 14, y + 34, 9, 22, 4); c.fill();
+    }
+  });
+
+  G.hudC.innerHTML = running ? `⏱ ${Math.ceil(timeLeft)}` : '';
+}
+
+for (const p of G.players()) stat(p);
+G.loop((dt) => { update(dt); draw(); });
+G.menu({
+  title: '🎯 Shooting Range',
+  text: '60 segundos para acertar o máximo de alvos. Até 4 jogadores ao mesmo tempo!',
+  how: [['Apontar', 'Mira'], ['A', 'Atirar'], ['B', 'Recarregar (ou aponte para fora e aperte A)'], ['🟠', 'Pratos voadores valem 150']],
+  primary: 'Começar', onPrimary: start,
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Alien Attack · OpenWii</title>
+</head>
+<body>
+<script src="/js/wii.js"></script>
+<script src="/js/game.js"></script>
+<script>
+const { U } = OpenWiiGame;
+// Sprites pixel-art (2 quadros cada)
+const SPRITES = [
+  { c: '#7dff6b', f: [
+    ['..X.....X..', '...X...X...', '..XXXXXXX..', '.XX.XXX.XX.', 'XXXXXXXXXXX', 'X.XXXXXXX.X', 'X.X.....X.X', '...XX.XX...'],
+    ['..X.....X..', 'X..X...X..X', 'X.XXXXXXX.X', 'XXX.XXX.XXX', 'XXXXXXXXXXX', '.XXXXXXXXX.', '..X.....X..', '.X.......X.'],
+  ] },
+  { c: '#ff6bd5', f: [
+    ['...XX...', '..XXXX..', '.XXXXXX.', 'XX.XX.XX', 'XXXXXXXX', '..X..X..', '.X.XX.X.', 'X.X..X.X'],
+    ['...XX...', '..XXXX..', '.XXXXXX.', 'XX.XX.XX', 'XXXXXXXX', '.X.XX.X.', 'X......X', '.X....X.'],
+  ] },
+  { c: '#6bd8ff', f: [
+    ['....XXXX....', '.XXXXXXXXXX.', 'XXXXXXXXXXXX', 'XXX..XX..XXX', 'XXXXXXXXXXXX', '...XX..XX...', '..XX.XX.XX..', 'XX........XX'],
+    ['....XXXX....', '.XXXXXXXXXX.', 'XXXXXXXXXXXX', 'XXX..XX..XXX', 'XXXXXXXXXXXX', '..XXX..XXX..', '.XX..XX..XX.', '..XX....XX..'],
+  ] },
+];
+
+let aliens = [], stars = [], beams = [], booms = [], texts = [];
+let score = 0, shield = 100, wave = 0, toSpawn = 0, spawnT = 0, bombs = 1, shake = 0, running = false, t = 0, waveBanner = 0;
+let best = U.best('alien');
+
+const G = OpenWiiGame.create({
+  cursor: 'crosshair',
+  onResize: () => { stars = Array.from({ length: 220 }, () => ({ x: U.rand(-1, 1), y: U.rand(-1, 1), z: U.rand(0.05, 1) })); },
+  onButton(p, btn, down) {
+    if (!down || !running) return;
+    if (btn === 'A') fire(p);
+    if (btn === 'B') smartBomb(p);
+  },
+});
+
+function project(a) {
+  // tamanho cresce com a proximidade; a posição abre pouco para nunca sair da tela
+  const k = 1 / (a.z + 0.15);
+  const spread = 0.55 + 0.45 * U.clamp(1 - a.z / 1.6, 0, 1);
+  return { x: G.W / 2 + (a.wx / 5) * G.W * 0.42 * spread, y: G.H / 2 + (a.wy / 4) * G.H * 0.36 * spread, s: k };
+}
+
+function nextWave() {
+  wave++;
+  toSpawn = 5 + wave * 3;
+  spawnT = 1.5;
+  waveBanner = 2;
+  if (wave > 1) bombs = Math.min(3, bombs + 1);
+}
+
+function spawnAlien() {
+  const boss = wave % 4 === 0 && toSpawn === 1;
+  aliens.push({
+    type: boss ? 2 : U.randi(0, 1), boss,
+    wx: U.rand(-5, 5), wy: U.rand(-4, 3.5), z: 1.6,
+    vz: (boss ? 0.1 : U.rand(0.16, 0.26)) * (1 + wave * 0.08),
+    dwx: U.rand(-0.8, 0.8), dwy: U.rand(-0.5, 0.5),
+    hp: boss ? 12 : 1, maxhp: boss ? 12 : 1, hitT: 0,
+  });
+}
+
+function fire(p) {
+  G.wii.sfx.laser();
+  G.wii.rumble(p.id, 30);
+  for (const side of [-1, 1]) beams.push({ x0: G.W / 2 + side * G.W * 0.45, y0: G.H + 10, x1: p.x, y1: p.y, life: 0.12, c: p.color });
+  // acerta o alien mais próximo (menor z) sob a mira
+  let hit = null;
+  for (const a of aliens) {
+    const q = project(a);
+    const r = (a.boss ? 70 : 34) * q.s * 0.35;
+    if (Math.hypot(p.x - q.x, p.y - q.y) < Math.max(r, 18) && (!hit || a.z < hit.z)) hit = a;
+  }
+  if (hit) damage(hit, 1);
+}
+
+function damage(a, n) {
+  a.hp -= n; a.hitT = 0.12;
+  const q = project(a);
+  if (a.hp <= 0) {
+    a.dead = true;
+    const pts = a.boss ? 500 : Math.round(50 + (a.z) * 100);
+    score += pts;
+    texts.push({ x: q.x, y: q.y, s: '+' + pts, life: 0.9 });
+    G.wii.sfx.boom();
+    for (let i = 0; i < (a.boss ? 60 : 24); i++) {
+      const ang = U.rand(0, 6.28), sp = U.rand(60, a.boss ? 600 : 350) * q.s * 0.3;
+      booms.push({ x: q.x, y: q.y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, r: U.rand(2, 6) * Math.min(3, q.s * 0.4), c: U.pick([SPRITES[a.type].c, '#fff', '#ffd23f']), life: U.rand(0.4, 0.9) });
+    }
+  } else {
+    G.wii.sfx.hit();
+  }
+}
+
+function smartBomb(p) {
+  if (bombs <= 0) { G.wii.sfx.empty(); return; }
+  bombs--;
+  G.rumbleAll(300);
+  shake = 0.4;
+  flash = 1;
+  for (const a of aliens) damage(a, a.boss ? 4 : 99);
+}
+let flash = 0;
+
+function start() {
+  aliens = []; beams = []; booms = []; texts = [];
+  score = 0; shield = 100; wave = 0; bombs = 1; running = true;
+  nextWave();
+  G.wii.sfx.start();
+}
+
+function end() {
+  running = false;
+  const rec = U.saveBest('alien', score);
+  best = Math.max(best, score);
+  G.wii.sfx.over();
+  setTimeout(() => G.menu({
+    title: 'A Terra caiu! 👽', text: `Você chegou à onda ${wave}.`,
+    html: `<div class="big">${score}</div><p>${rec ? '🏆 Novo recorde!' : `Recorde: ${best}`}</p>`,
+    primary: 'Defender de novo', onPrimary: start,
+  }), 600);
+}
+
+function update(dt) {
+  t += dt;
+  for (const s of stars) { s.z -= dt * 0.12; if (s.z < 0.05) { s.z = 1; s.x = U.rand(-1, 1); s.y = U.rand(-1, 1); } }
+  if (!running || !G.playing) return;
+  waveBanner = Math.max(0, waveBanner - dt);
+  spawnT -= dt;
+  if (toSpawn > 0 && spawnT <= 0) { spawnAlien(); toSpawn--; spawnT = U.rand(0.4, 1.2) * Math.max(0.4, 1 - wave * 0.06); }
+  for (const a of aliens) {
+    a.z -= a.vz * dt;
+    a.wx += Math.sin(t * 1.5 + a.dwy * 10) * a.dwx * dt;
+    a.wy += Math.cos(t * 1.2 + a.dwx * 10) * a.dwy * dt;
+    a.wx = U.clamp(a.wx, -5.5, 5.5); a.wy = U.clamp(a.wy, -4.2, 3.8);
+    a.hitT = Math.max(0, a.hitT - dt);
+    if (a.z <= 0.02 && !a.dead) {
+      a.dead = true;
+      shield -= a.boss ? 40 : 12;
+      shake = 0.35;
+      G.wii.sfx.bad();
+      G.rumbleAll(300);
+      if (shield <= 0) { shield = 0; end(); }
+    }
+  }
+  aliens = aliens.filter((a) => !a.dead);
+  if (toSpawn === 0 && aliens.length === 0) { score += 100 * wave; nextWave(); G.wii.sfx.coin(); }
+  for (const b of beams) b.life -= dt;
+  beams = beams.filter((b) => b.life > 0);
+  for (const q of booms) { q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; }
+  booms = booms.filter((q) => q.life > 0);
+  for (const x of texts) { x.life -= dt; x.y -= 40 * dt; }
+  texts = texts.filter((x) => x.life > 0);
+  shake = Math.max(0, shake - dt);
+  flash = Math.max(0, flash - dt * 2);
+}
+
+function drawSprite(c, a, x, y, size) {
+  const sp = SPRITES[a.type];
+  const fr = sp.f[Math.floor(t * 3 + a.wx) % 2];
+  const cols = fr[0].length, rows = fr.length;
+  const px = size / cols;
+  c.fillStyle = a.hitT > 0 ? '#fff' : sp.c;
+  c.shadowColor = sp.c; c.shadowBlur = 12;
+  for (let r = 0; r < rows; r++) for (let k = 0; k < cols; k++) {
+    if (fr[r][k] === 'X') c.fillRect(x - size / 2 + k * px, y - (rows * px) / 2 + r * px, px + 0.6, px + 0.6);
+  }
+  c.shadowBlur = 0;
+}
+
+function draw() {
+  const c = G.ctx;
+  c.save();
+  if (shake > 0) c.translate(U.rand(-12, 12) * shake * 3, U.rand(-12, 12) * shake * 3);
+  const bg = c.createRadialGradient(G.W / 2, G.H / 2, 0, G.W / 2, G.H / 2, G.W * 0.7);
+  bg.addColorStop(0, '#1b1036'); bg.addColorStop(1, '#05030c');
+  c.fillStyle = bg; c.fillRect(-20, -20, G.W + 40, G.H + 40);
+  for (const s of stars) {
+    const k = 1 / s.z;
+    const x = G.W / 2 + s.x * G.W * 0.5 * k * 0.3, y = G.H / 2 + s.y * G.H * 0.5 * k * 0.3;
+    c.fillStyle = `rgba(255,255,255,${1 - s.z})`;
+    c.fillRect(x, y, 2 * (1.2 - s.z), 2 * (1.2 - s.z));
+  }
+  // planeta ao fundo
+  const pg = c.createRadialGradient(G.W * 0.2, G.H * 0.25, 10, G.W * 0.2, G.H * 0.25, 90);
+  pg.addColorStop(0, '#ff9d6b'); pg.addColorStop(1, '#6b2a8a');
+  c.fillStyle = pg; c.beginPath(); c.arc(G.W * 0.2, G.H * 0.25, 70, 0, 7); c.fill();
+
+  const sorted = [...aliens].sort((a, b) => b.z - a.z);
+  for (const a of sorted) {
+    const q = project(a);
+    const size = (a.boss ? 90 : 46) * q.s * 0.35;
+    c.globalAlpha = Math.min(1, (1.6 - a.z) * 2);
+    drawSprite(c, a, q.x, q.y, size);
+    if (a.boss) {
+      c.fillStyle = 'rgba(255,255,255,.3)'; c.fillRect(q.x - size / 2, q.y - size * 0.6, size, 6);
+      c.fillStyle = '#ff4d5e'; c.fillRect(q.x - size / 2, q.y - size * 0.6, size * (a.hp / a.maxhp), 6);
+    }
+    if (a.z < 0.3) { // aviso: muito perto!
+      c.strokeStyle = `rgba(255,60,60,${0.5 + Math.sin(t * 20) * 0.5})`; c.lineWidth = 3;
+      c.beginPath(); c.arc(q.x, q.y, size * 0.75, 0, 7); c.stroke();
+    }
+  }
+  c.globalAlpha = 1;
+  for (const b of beams) {
+    c.strokeStyle = b.c; c.lineWidth = 6 * b.life * 10; c.lineCap = 'round';
+    c.shadowColor = b.c; c.shadowBlur = 16;
+    c.beginPath(); c.moveTo(b.x0, b.y0); c.lineTo(b.x1, b.y1); c.stroke();
+  }
+  c.shadowBlur = 0;
+  for (const q of booms) { c.globalAlpha = Math.min(1, q.life * 2); c.fillStyle = q.c; c.fillRect(q.x, q.y, q.r, q.r); }
+  c.globalAlpha = 1;
+  c.textAlign = 'center'; c.font = '900 24px system-ui';
+  for (const x of texts) { c.globalAlpha = Math.min(1, x.life * 2); c.fillStyle = '#fff'; c.fillText(x.s, x.x, x.y); }
+  c.globalAlpha = 1;
+  // cockpit
+  c.fillStyle = 'rgba(20,30,50,.85)';
+  c.beginPath(); c.moveTo(0, G.H); c.lineTo(G.W * 0.12, G.H * 0.9); c.lineTo(G.W * 0.88, G.H * 0.9); c.lineTo(G.W, G.H); c.fill();
+  c.strokeStyle = '#3df0ff'; c.lineWidth = 2; c.stroke();
+  if (waveBanner > 0 && running) {
+    c.globalAlpha = Math.min(1, waveBanner);
+    c.font = '900 64px system-ui'; c.fillStyle = '#fff';
+    c.fillText(`ONDA ${wave}`, G.W / 2, G.H * 0.4);
+    c.globalAlpha = 1;
+  }
+  c.restore();
+  if (flash > 0) { c.fillStyle = `rgba(200,255,255,${flash * 0.8})`; c.fillRect(0, 0, G.W, G.H); }
+  if (shield < 30 && running) { c.fillStyle = `rgba(255,0,0,${0.12 + Math.sin(t * 6) * 0.08})`; c.fillRect(0, 0, G.W, G.H); }
+
+  G.hudL.innerHTML = `👾 ${score}<div class="sub">Onda ${wave} · Recorde ${best}</div>`;
+  G.hudR.innerHTML = `🛡 ${shield}%<div class="sub">Bombas (B): ${'💥'.repeat(bombs) || '—'}</div>`;
+}
+
+G.loop((dt) => { update(dt); draw(); });
+G.menu({
+  title: '👾 Alien Attack',
+  text: 'Os aliens estão vindo em direção à Terra. Destrua todos antes que cheguem ao seu escudo!',
+  how: [['Apontar', 'Mira'], ['A', 'Laser'], ['B', 'Bomba (destrói todos na tela)'], ['🔴', 'Círculo vermelho = muito perto!']],
+  primary: 'Defender', onPrimary: start,
+});
+</script>
+</body>
+</html>

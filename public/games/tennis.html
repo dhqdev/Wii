@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tênis · OpenWii</title>
+</head>
+<body>
+<script src="/js/wii.js"></script>
+<script src="/js/game.js"></script>
+<script>
+const { U } = OpenWiiGame;
+const WIN = 7;
+let ball, pads, score, serveT, trail = [], texts = [], running = false;
+
+const G = OpenWiiGame.create({ cursor: 'hand', playCursor: false });
+
+function reset() {
+  pads = [
+    { side: 0, y: G.H / 2, vy: 0, h: G.H * 0.18 },
+    { side: 1, y: G.H / 2, vy: 0, h: G.H * 0.18 },
+  ];
+  score = [0, 0];
+  running = true;
+  serve(Math.random() < 0.5 ? 0 : 1);
+  G.wii.sfx.start();
+}
+
+function serve(towards) {
+  ball = { x: G.W / 2, y: G.H / 2, vx: 0, vy: 0, r: 13, towards };
+  serveT = 1.1;
+}
+
+function controllers() {
+  // jogador 1 = esquerda; jogador 2 (se houver) = direita, senão CPU
+  const ps = G.players().sort((a, b) => a.id - b.id);
+  return [ps[0] || null, ps[1] || null];
+}
+
+function point(winner) {
+  score[winner]++;
+  G.wii.sfx[winner === 0 || controllers()[1] ? 'coin' : 'bad']();
+  texts.push({ s: 'Ponto!', x: winner ? G.W * 0.75 : G.W * 0.25, y: G.H / 2, life: 1 });
+  if (score[winner] >= WIN) {
+    running = false;
+    const [, p2] = controllers();
+    const name = winner === 0 ? 'Jogador 1' : p2 ? 'Jogador 2' : 'CPU';
+    G.wii.sfx.over();
+    setTimeout(() => G.menu({ title: `${name} venceu! 🏆`, html: `<div class="big">${score[0]} × ${score[1]}</div>`, primary: 'Revanche', onPrimary: reset }), 500);
+    return;
+  }
+  serve(winner ? 0 : 1);
+}
+
+function update(dt) {
+  if (!running || !G.playing) return;
+  const [p1, p2] = controllers();
+  const margin = G.W * 0.06;
+
+  pads.forEach((pad, i) => {
+    const ctrl = i === 0 ? p1 : p2;
+    const oy = pad.y;
+    if (ctrl) pad.y += (ctrl.y - pad.y) * Math.min(1, dt * 14);
+    else {
+      // CPU: segue a bola com atraso e erro
+      const target = ball.vx > 0 ? ball.y + Math.sin(performance.now() / 400) * pad.h * 0.3 : G.H / 2;
+      const maxSp = G.H * (0.9 + score[0] * 0.08);
+      pad.y += U.clamp(target - pad.y, -maxSp * dt, maxSp * dt);
+    }
+    pad.y = U.clamp(pad.y, pad.h / 2 + 20, G.H - pad.h / 2 - 20);
+    pad.vy = (pad.y - oy) / dt;
+  });
+
+  if (serveT > 0) {
+    serveT -= dt;
+    if (serveT <= 0) {
+      const sp = G.W * 0.42;
+      ball.vx = (ball.towards ? 1 : -1) * sp;
+      ball.vy = U.rand(-0.4, 0.4) * sp;
+    }
+    return;
+  }
+
+  ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+  if (ball.y < ball.r + 20 && ball.vy < 0) { ball.y = ball.r + 20; ball.vy *= -1; G.wii.sfx.hover(); }
+  if (ball.y > G.H - ball.r - 20 && ball.vy > 0) { ball.y = G.H - ball.r - 20; ball.vy *= -1; G.wii.sfx.hover(); }
+
+  pads.forEach((pad, i) => {
+    const px = i === 0 ? margin : G.W - margin;
+    const dir = i === 0 ? 1 : -1;
+    const ctrl = i === 0 ? p1 : p2;
+    if (Math.sign(ball.vx) === -dir && Math.abs(ball.x - px) < ball.r + 10 && Math.abs(ball.y - pad.y) < pad.h / 2 + ball.r) {
+      const off = (ball.y - pad.y) / (pad.h / 2);
+      const smash = Math.abs(pad.vy) > G.H * 1.6; // golpe rápido = cortada
+      const sp = Math.min(Math.hypot(ball.vx, ball.vy) * (smash ? 1.35 : 1.06), G.W * 1.6);
+      const ang = off * 0.9;
+      ball.vx = Math.cos(ang) * sp * dir;
+      ball.vy = Math.sin(ang) * sp + pad.vy * 0.15;
+      ball.x = px + dir * (ball.r + 11);
+      G.wii.sfx[smash ? 'shoot' : 'hit']();
+      if (ctrl) G.wii.rumble(ctrl.id, smash ? 120 : 40);
+      if (smash) texts.push({ s: 'CORTADA!', x: ball.x, y: ball.y - 40, life: 0.8 });
+    }
+  });
+
+  trail.push({ x: ball.x, y: ball.y });
+  if (trail.length > 12) trail.shift();
+  if (ball.x < -40) point(1);
+  else if (ball.x > G.W + 40) point(0);
+  for (const t of texts) { t.life -= dt; t.y -= 30 * dt; }
+  texts = texts.filter((t) => t.life > 0);
+}
+
+function draw() {
+  const c = G.ctx;
+  c.fillStyle = '#3d8b5a'; c.fillRect(0, 0, G.W, G.H);
+  c.fillStyle = '#2f6fc2'; c.fillRect(G.W * 0.03, 20, G.W * 0.94, G.H - 40);
+  c.strokeStyle = '#fff'; c.lineWidth = 4;
+  c.strokeRect(G.W * 0.03, 20, G.W * 0.94, G.H - 40);
+  c.beginPath(); c.moveTo(G.W * 0.03, G.H / 2); c.lineTo(G.W * 0.97, G.H / 2); c.globalAlpha = 0.4; c.stroke(); c.globalAlpha = 1;
+  // rede
+  c.setLineDash([10, 10]); c.lineWidth = 6;
+  c.beginPath(); c.moveTo(G.W / 2, 20); c.lineTo(G.W / 2, G.H - 20); c.stroke();
+  c.setLineDash([]);
+
+  c.textAlign = 'center'; c.fillStyle = 'rgba(255,255,255,.85)'; c.font = '900 96px system-ui';
+  if (score) { c.fillText(score[0], G.W * 0.25, 130); c.fillText(score[1], G.W * 0.75, 130); }
+
+  if (pads) {
+    const [p1, p2] = controllers();
+    const margin = G.W * 0.06;
+    pads.forEach((pad, i) => {
+      const x = i === 0 ? margin : G.W - margin;
+      const col = i === 0 ? (p1 ? p1.color : '#2aa7ff') : (p2 ? p2.color : '#ffffff');
+      c.fillStyle = col;
+      c.shadowColor = 'rgba(0,0,0,.35)'; c.shadowBlur = 10;
+      c.beginPath(); c.roundRect(x - 9, pad.y - pad.h / 2, 18, pad.h, 9); c.fill();
+      c.shadowBlur = 0;
+    });
+    c.font = '700 16px system-ui'; c.fillStyle = 'rgba(255,255,255,.8)';
+    c.fillText('Jogador 1', G.W * 0.25, G.H - 34);
+    c.fillText(p2 ? 'Jogador 2' : 'CPU', G.W * 0.75, G.H - 34);
+  }
+  trail.forEach((t, i) => {
+    c.globalAlpha = (i / trail.length) * 0.4;
+    c.fillStyle = '#e8ff5a';
+    c.beginPath(); c.arc(t.x, t.y, ball.r * (i / trail.length), 0, 7); c.fill();
+  });
+  c.globalAlpha = 1;
+  if (ball) {
+    c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.ellipse(ball.x + 6, ball.y + 10, ball.r, ball.r * 0.6, 0, 0, 7); c.fill();
+    c.fillStyle = '#e8ff5a'; c.beginPath(); c.arc(ball.x, ball.y, ball.r, 0, 7); c.fill();
+    c.strokeStyle = '#fff'; c.lineWidth = 2; c.beginPath(); c.arc(ball.x - 6, ball.y, ball.r * 0.8, -1, 1); c.stroke();
+  }
+  if (serveT > 0 && running) { c.font = '900 40px system-ui'; c.fillStyle = '#fff'; c.fillText('Prepare-se…', G.W / 2, G.H / 2 - 40); }
+  c.font = '900 32px system-ui';
+  for (const t of texts) { c.globalAlpha = t.life; c.fillStyle = '#ffd23f'; c.fillText(t.s, t.x, t.y); }
+  c.globalAlpha = 1;
+}
+
+G.loop((dt) => { update(dt); draw(); });
+G.menu({
+  title: '🏓 Tênis',
+  text: `Mova a raquete apontando o celular para cima e para baixo. Quem fizer ${WIN} pontos vence. Com 2 controles conectados, jogue contra um amigo!`,
+  how: [['Apontar', 'Move a raquete'], ['Golpe rápido', 'Movimente na hora da batida para dar uma cortada']],
+  primary: 'Jogar', onPrimary: reset,
+});
+</script>
+</body>
+</html>

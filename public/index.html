@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenWii</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+<style>
+  :root { --bg:#eef1f4; --ink:#2b3642; --muted:#9aa4ae; --tile:#f9fafb; --blue:#2aa7ff; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; color:var(--ink); }
+  body {
+    background:
+      repeating-linear-gradient(180deg, rgba(255,255,255,.55) 0 2px, transparent 2px 5px),
+      radial-gradient(ellipse at 50% 0%, #fff 0%, #eef1f4 55%, #e2e7ec 100%);
+    display:flex; flex-direction:column;
+  }
+  main { flex:1; display:flex; align-items:center; justify-content:center; padding:4vh 5vw 0; }
+  .grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:min(2.2vw, 28px); width:min(1100px, 88vw); }
+  .ch {
+    position:relative; aspect-ratio:16/10; border-radius:22px; background:var(--tile); border:3px solid #dfe4e9;
+    box-shadow:0 2px 0 #fff inset, 0 6px 14px rgba(40,60,80,.08); overflow:hidden;
+    transition:transform .18s cubic-bezier(.3,1.6,.6,1), border-color .15s, box-shadow .15s;
+  }
+  .ch.empty { background:repeating-linear-gradient(135deg,#f3f5f7 0 10px,#eef1f4 10px 20px); }
+  .ch.game { cursor:pointer; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; }
+  .ch.game .ic { font-size:clamp(28px, 4.6vw, 64px); filter:drop-shadow(0 4px 6px rgba(0,0,0,.18)); transition:transform .3s; }
+  .ch.game .nm { font-weight:800; font-size:clamp(11px, 1.15vw, 17px); letter-spacing:.01em; text-shadow:0 1px 3px rgba(0,0,0,.25); }
+  .ch.game::after { content:""; position:absolute; inset:0; background:linear-gradient(180deg,rgba(255,255,255,.35),transparent 45%); pointer-events:none; }
+  .ch.wii-hover, .ch.game:hover { transform:scale(1.07); border-color:var(--blue); box-shadow:0 0 0 4px rgba(42,167,255,.35), 0 14px 30px rgba(40,60,80,.22); z-index:2; }
+  .ch.wii-hover .ic, .ch.game:hover .ic { transform:scale(1.12) rotate(-4deg); }
+  .ch.opening { transform:scale(1.25); opacity:0; transition:transform .45s ease-in, opacity .45s ease-in; }
+
+  .g-fruit { background:linear-gradient(145deg,#ffb347,#ff6a3d); }
+  .g-alien { background:linear-gradient(145deg,#8be36d,#2fb36b); }
+  .g-shoot { background:linear-gradient(145deg,#6db6ff,#4064f0); }
+  .g-sketch { background:linear-gradient(145deg,#e09cff,#9c6cff); }
+  .g-plane { background:linear-gradient(145deg,#7fe0ff,#2ea0e8); }
+  .g-tennis { background:linear-gradient(145deg,#ffe066,#ff9f1a); }
+
+  footer {
+    position:relative; height:21vh; min-height:130px; margin-top:3vh;
+    background:linear-gradient(#f9fafb,#e6eaee); border-top:3px solid #d6dce2;
+    border-radius:50% 50% 0 0 / 30% 30% 0 0;
+    display:flex; align-items:center; justify-content:space-between; padding:0 6vw;
+    box-shadow:0 -8px 30px rgba(40,60,80,.06);
+  }
+  .logo { font-weight:900; font-size:clamp(18px,2vw,28px); color:#b9c1c9; letter-spacing:-.02em; }
+  .logo span { color:#9fd4ff; }
+  .clock { text-align:center; color:#a3acb5; }
+  .clock .t { font-size:clamp(32px, 4vw, 60px); font-weight:300; letter-spacing:.02em; line-height:1; }
+  .clock .d { font-size:clamp(12px, 1.2vw, 17px); margin-top:6px; text-transform:capitalize; }
+  .qr { display:flex; align-items:center; gap:14px; cursor:pointer; background:none; border:none; padding:0; font:inherit; color:inherit; }
+  .qr img { width:clamp(64px,7vw,96px); height:clamp(64px,7vw,96px); border-radius:10px; background:#fff; padding:4px; box-shadow:0 4px 12px rgba(0,0,0,.1); }
+  .qr .pl { display:flex; gap:6px; flex-direction:column; text-align:left; font-size:12px; color:var(--muted); }
+  .dots { display:flex; gap:6px; }
+  .dots i { width:12px; height:12px; border-radius:50%; background:#d5dbe1; }
+
+  .connect { position:fixed; inset:0; background:rgba(238,241,244,.86); backdrop-filter:blur(8px); display:flex; align-items:center; justify-content:center; z-index:50; }
+  .card { background:#fff; border-radius:28px; padding:36px 44px; display:flex; gap:40px; align-items:center; box-shadow:0 30px 80px rgba(40,60,80,.25); max-width:92vw; }
+  .card img { width:min(280px,36vw); height:min(280px,36vw); }
+  .card h2 { margin:0 0 6px; font-size:30px; letter-spacing:-.02em; }
+  .card ol { margin:14px 0 18px; padding-left:20px; line-height:1.6; color:#55606b; max-width:380px; }
+  .card code { background:#eef4fb; color:#1667b8; padding:3px 8px; border-radius:6px; font-size:14px; word-break:break-all; }
+  .card .btns { display:flex; gap:10px; margin-top:16px; }
+  .card button { font:700 15px system-ui; padding:12px 20px; border-radius:999px; border:none; background:#eef1f4; color:#2b3642; cursor:pointer; }
+  .card button.primary { background:var(--blue); color:#fff; }
+  .card button.wii-hover { box-shadow:0 0 0 4px rgba(42,167,255,.35); }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+  <main>
+    <div class="grid" id="grid"></div>
+  </main>
+  <footer>
+    <div class="logo">Open<span>Wii</span></div>
+    <div class="clock"><div class="t" id="time">--:--</div><div class="d" id="date"></div></div>
+    <button class="qr" data-wii id="qrBtn" title="Conectar controle">
+      <div class="pl"><b>Conectar celular</b><div class="dots" id="dots"><i></i><i></i><i></i><i></i></div></div>
+      <img src="/qr.svg" alt="QR code do controle">
+    </button>
+  </footer>
+
+  <div class="connect hidden" id="connect">
+    <div class="card">
+      <img src="/qr.svg" alt="QR code do controle">
+      <div>
+        <h2>Conecte seu celular 📱</h2>
+        <ol>
+          <li>Celular e computador no <b>mesmo Wi-Fi</b>.</li>
+          <li>Aponte a câmera para o QR code, ou abra:<br><code id="url">…</code></li>
+          <li>Aceite o aviso de segurança (certificado local) e toque em <b>Conectar controle</b>.</li>
+          <li>Segure como um controle do Wii e aponte para a tela.</li>
+        </ol>
+        <small style="color:#9aa4ae">Sem celular? Use o mouse: clique = A, Esc = Home.</small>
+        <div class="btns"><button class="primary" id="closeConnect" data-wii>Ok, entendi</button></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/wii.js"></script>
+  <script>
+    const GAMES = [
+      { id: 'fruit', name: 'Fruit Ninja', ic: '🍉', cls: 'g-fruit' },
+      { id: 'alien', name: 'Alien Attack', ic: '👾', cls: 'g-alien' },
+      { id: 'shooting', name: 'Shooting Range', ic: '🎯', cls: 'g-shoot' },
+      { id: 'sketch', name: 'Sketch', ic: '🎨', cls: 'g-sketch' },
+      { id: 'plane', name: 'Aviãozinho', ic: '✈️', cls: 'g-plane' },
+      { id: 'tennis', name: 'Tênis', ic: '🏓', cls: 'g-tennis' },
+    ];
+    const grid = document.getElementById('grid');
+    for (let i = 0; i < 12; i++) {
+      const g = GAMES[i];
+      const el = document.createElement('div');
+      if (g) {
+        el.className = 'ch game ' + g.cls;
+        el.dataset.wii = '';
+        el.innerHTML = `<div class="ic">${g.ic}</div><div class="nm">${g.name}</div>`;
+        el.onclick = () => {
+          OpenWii.sfx.start();
+          el.classList.add('opening');
+          setTimeout(() => (location.href = `/games/${g.id}.html`), 420);
+        };
+      } else {
+        el.className = 'ch empty';
+      }
+      grid.appendChild(el);
+    }
+
+    const wii = OpenWii.connect({
+      cursor: 'hand',
+      home: false,
+      onButton(p, btn, down) {
+        if (down && btn === 'HOME') document.getElementById('connect').classList.add('hidden');
+      },
+    });
+
+    // Painel de conexão
+    const connect = document.getElementById('connect');
+    fetch('/config.json').then((r) => r.json()).then((c) => (document.getElementById('url').textContent = c.controllerUrl));
+    document.getElementById('qrBtn').onclick = () => connect.classList.remove('hidden');
+    document.getElementById('closeConnect').onclick = () => connect.classList.add('hidden');
+    function refreshDots() {
+      const ids = [...wii.players.keys()].filter((id) => id > 0);
+      [...document.getElementById('dots').children].forEach((d, i) => (d.style.background = ids.includes(i + 1) ? wii.colors[i] : ''));
+      if (ids.length) connect.classList.add('hidden');
+    }
+    wii.on('join', refreshDots);
+    wii.on('leave', () => setTimeout(refreshDots, 0));
+    setTimeout(() => {
+      refreshDots();
+      if (![...wii.players.keys()].some((id) => id > 0)) connect.classList.remove('hidden');
+    }, 400);
+
+    // Relógio
+    function tick() {
+      const d = new Date();
+      document.getElementById('time').textContent = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      document.getElementById('date').textContent = d.toLocaleDateString('pt-BR', { weekday: 'short', day: 'numeric', month: 'numeric' });
+    }
+    tick();
+    setInterval(tick, 5000);
+  </script>
+</body>
+</html>

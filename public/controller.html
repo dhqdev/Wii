@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#e9edf2">
+<title>OpenWii Remote</title>
+<style>
+  :root { --body:#f7f9fb; --edge:#d9dfe6; --ink:#5b6673; --btn:#eef1f4; --btn-shadow:#c9d0d8; --blue:#2aa7ff; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+  html,body { margin:0; height:100%; overflow:hidden; background:#e3e8ee; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); touch-action:none; overscroll-behavior:none; }
+  body { display:flex; align-items:center; justify-content:center; padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+
+  .remote {
+    position:relative; width:min(78vw, 340px); height:min(89dvh, 860px); margin-top:14px;
+    background:linear-gradient(90deg,#eceff3 0%,#fff 18%,#fff 82%,#e7ebf0 100%);
+    border-radius:48px/40px; box-shadow:0 1px 0 #fff inset, 0 -2px 0 #d3d9e0 inset, 0 24px 50px rgba(30,45,60,.22), 0 2px 6px rgba(30,45,60,.15);
+    display:flex; flex-direction:column; align-items:center; padding:22px 0 18px;
+  }
+  .status { position:absolute; top:-30px; left:0; right:0; text-align:center; font-size:12px; font-weight:600; letter-spacing:.02em; color:#7a8592; }
+  .status b { color:var(--blue); }
+  .row { display:flex; align-items:center; justify-content:center; width:100%; }
+
+  .btn {
+    display:flex; align-items:center; justify-content:center; border:none; outline:none; padding:0; color:var(--ink);
+    background:radial-gradient(circle at 50% 35%, #fff, var(--btn) 70%);
+    box-shadow:0 3px 0 var(--btn-shadow), 0 6px 10px rgba(40,55,70,.18), 0 0 0 1px #dde3e9;
+    font-weight:700; font-family:inherit; transition:transform .05s, box-shadow .05s; touch-action:none;
+  }
+  .btn.down { transform:translateY(3px); box-shadow:0 0 0 var(--btn-shadow), 0 2px 4px rgba(40,55,70,.2), 0 0 0 1px #dde3e9; background:#e2e7ec; }
+
+  .power { width:40px; height:40px; border-radius:50%; align-self:flex-start; margin-left:26px; }
+  .power svg { width:18px; height:18px; }
+
+  .dpad { position:relative; width:150px; height:150px; margin-top:6px; }
+  .dpad .btn { position:absolute; border-radius:10px; }
+  .dpad .u,.dpad .d { left:50px; width:50px; height:52px; }
+  .dpad .l,.dpad .r { top:50px; width:52px; height:50px; }
+  .dpad .u { top:0; border-radius:10px 10px 4px 4px; } .dpad .d { bottom:0; border-radius:4px 4px 10px 10px; }
+  .dpad .l { left:0; border-radius:10px 4px 4px 10px; } .dpad .r { right:0; border-radius:4px 10px 10px 4px; }
+  .dpad .c { position:absolute; left:50px; top:50px; width:50px; height:50px; background:var(--btn); box-shadow:0 0 0 1px #dde3e9; }
+  .dpad .btn::after { content:""; border:7px solid transparent; }
+  .dpad .u::after { border-bottom-color:#9aa4af; margin-top:-8px; } .dpad .d::after { border-top-color:#9aa4af; margin-bottom:-8px; }
+  .dpad .l::after { border-right-color:#9aa4af; margin-left:-8px; } .dpad .r::after { border-left-color:#9aa4af; margin-right:-8px; }
+
+  .a { width:92px; height:92px; border-radius:50%; font-size:32px; margin-top:20px; }
+  .b { width:150px; height:46px; border-radius:23px; font-size:18px; margin-top:22px; background:linear-gradient(#dfe5ea,#cfd7df); }
+  .trio { margin-top:28px; gap:30px; }
+  .small { width:40px; height:40px; border-radius:50%; font-size:20px; }
+  .home { width:50px; height:50px; background:radial-gradient(circle at 50% 35%,#3b4652,#1f2730 70%); color:#fff; box-shadow:0 3px 0 #0e141a,0 6px 10px rgba(0,0,0,.25); }
+  .home.down { background:#111; }
+  .home svg { width:22px; height:22px; }
+  .speaker { display:grid; grid-template-columns:repeat(6,6px); gap:7px; margin-top:26px; }
+  .speaker i { width:6px; height:6px; border-radius:50%; background:#c7ced6; box-shadow:inset 0 1px 1px rgba(0,0,0,.2); }
+  .num { width:54px; height:54px; border-radius:50%; font-size:22px; }
+  .nums { flex-direction:column; gap:20px; margin-top:auto; }
+  .leds { display:flex; gap:14px; margin-top:22px; }
+  .leds i { width:12px; height:5px; border-radius:3px; background:#cfd6dd; transition:background .3s, box-shadow .3s; }
+  .leds i.on { background:var(--blue); box-shadow:0 0 8px var(--blue); }
+  .brand { margin-top:10px; font-size:13px; letter-spacing:.3em; color:#b4bcc5; font-weight:800; }
+  .hint { position:absolute; bottom:-26px; left:0; right:0; text-align:center; font-size:11px; color:#8c96a1; }
+
+  /* ajustes p/ celulares baixos */
+  @media (max-height: 700px) {
+    .remote { padding-top:14px; }
+    .dpad { transform:scale(.85); margin:-8px 0; }
+    .a { width:78px; height:78px; margin-top:8px; }
+    .b { margin-top:14px; height:40px; }
+    .trio { margin-top:16px; }
+    .speaker { margin-top:14px; }
+    .num { width:46px; height:46px; }
+    .nums { gap:12px; }
+  }
+
+  .overlay { position:fixed; inset:0; background:rgba(233,237,242,.97); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:28px; text-align:center; z-index:10; }
+  .overlay h1 { margin:0; font-size:30px; color:#24303c; letter-spacing:-.02em; }
+  .overlay h1 span { color:var(--blue); }
+  .overlay p { margin:0; max-width:320px; line-height:1.45; color:#5b6673; }
+  .overlay button { font:700 18px system-ui; padding:16px 34px; border-radius:999px; border:none; background:var(--blue); color:#fff; box-shadow:0 8px 20px rgba(42,167,255,.4); }
+  .overlay small { color:#8c96a1; max-width:320px; line-height:1.4; }
+  .hidden { display:none !important; }
+
+  .settings { position:fixed; right:10px; top:calc(env(safe-area-inset-top) + 6px); width:34px; height:34px; border-radius:50%; border:none; background:rgba(255,255,255,.7); color:#6b7682; font-size:18px; z-index:5; }
+  .panel { position:fixed; inset:auto 12px calc(env(safe-area-inset-bottom) + 12px) 12px; background:#fff; border-radius:20px; padding:18px; box-shadow:0 10px 40px rgba(0,0,0,.2); z-index:20; display:flex; flex-direction:column; gap:14px; font-size:15px; }
+  .panel label { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  .panel input[type=range] { flex:1; }
+  .panel .close { align-self:flex-end; border:none; background:#eef1f4; border-radius:999px; padding:8px 16px; font-weight:600; }
+</style>
+</head>
+<body>
+  <button class="settings" id="settingsBtn" aria-label="Ajustes">⚙</button>
+
+  <div class="remote" id="remote">
+    <div class="status" id="status">Conectando…</div>
+    <button class="btn power" data-b="POWER" aria-label="Centralizar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#e5484d" stroke-width="2.6" stroke-linecap="round"><path d="M12 3v8"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>
+    </button>
+    <div class="dpad">
+      <button class="btn u" data-b="UP" aria-label="Cima"></button>
+      <button class="btn l" data-b="LEFT" aria-label="Esquerda"></button>
+      <div class="c"></div>
+      <button class="btn r" data-b="RIGHT" aria-label="Direita"></button>
+      <button class="btn d" data-b="DOWN" aria-label="Baixo"></button>
+    </div>
+    <button class="btn a" data-b="A">A</button>
+    <button class="btn b" data-b="B">B</button>
+    <div class="row trio">
+      <button class="btn small" data-b="MINUS">−</button>
+      <button class="btn small home" data-b="HOME" aria-label="Home">
+        <svg viewBox="0 0 24 24" fill="#fff"><path d="M12 3 2 12h3v8h5v-5h4v5h5v-8h3z"/></svg>
+      </button>
+      <button class="btn small" data-b="PLUS">+</button>
+    </div>
+    <div class="speaker" id="speaker"></div>
+    <div class="row nums">
+      <button class="btn num" data-b="ONE">1</button>
+      <button class="btn num" data-b="TWO">2</button>
+    </div>
+    <div class="leds" id="leds"><i></i><i></i><i></i><i></i></div>
+    <div class="brand">OpenWii</div>
+    <div class="hint" id="hint">⏻ ou segurar ⌂ = centralizar ponteiro</div>
+  </div>
+
+  <div class="overlay" id="start">
+    <h1>Open<span>Wii</span></h1>
+    <p>Segure o celular como um controle do Wii, com a tela para cima e o topo apontando para o computador.</p>
+    <button id="startBtn">Conectar controle</button>
+    <small id="startMsg">Vamos pedir acesso aos sensores de movimento.</small>
+  </div>
+
+  <div class="panel hidden" id="panel">
+    <label>Sensibilidade <input type="range" id="sens" min="0.4" max="3" step="0.1"></label>
+    <label>Inverter horizontal <input type="checkbox" id="invX"></label>
+    <label>Inverter vertical <input type="checkbox" id="invY"></label>
+    <label>Vibração <input type="checkbox" id="vib"></label>
+    <small style="color:#8c96a1">Sem giroscópio? Arraste o dedo nas áreas vazias do controle para mover o ponteiro.</small>
+    <button class="close" id="closePanel">Fechar</button>
+  </div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  for (let i = 0; i < 36; i++) $('speaker').appendChild(document.createElement('i'));
+
+  // ---------- ajustes salvos ----------
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('openwii.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem('openwii.' + k, JSON.stringify(v)); } catch {} },
+  };
+  const cfg = { sens: store.get('sens', 1.2), invX: store.get('invX', false), invY: store.get('invY', false), vib: store.get('vib', true) };
+  $('sens').value = cfg.sens; $('invX').checked = cfg.invX; $('invY').checked = cfg.invY; $('vib').checked = cfg.vib;
+  for (const k of ['sens', 'invX', 'invY', 'vib']) {
+    $(k).addEventListener('input', (e) => { cfg[k] = e.target.type === 'checkbox' ? e.target.checked : Number(e.target.value); store.set(k, cfg[k]); });
+  }
+  $('settingsBtn').onclick = () => $('panel').classList.toggle('hidden');
+  $('closePanel').onclick = () => $('panel').classList.add('hidden');
+
+  // ---------- WebSocket ----------
+  let ws = null, playerId = 0;
+  function connect() {
+    ws = new WebSocket('wss://' + location.host + '/ws?role=controller');
+    ws.onopen = () => setStatus('Conectado, aguardando…');
+    ws.onmessage = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.t === 'hello') {
+        playerId = m.id;
+        setStatus(`Conectado · <b>Jogador ${m.id}</b>`);
+        [...$('leds').children].forEach((el, i) => el.classList.toggle('on', i === m.id - 1));
+        buzz([30, 60, 30]);
+      } else if (m.t === 'rumble') {
+        buzz(m.ms);
+      } else if (m.t === 'full') {
+        setStatus('Já existem 4 controles conectados');
+      }
+    };
+    ws.onclose = () => {
+      playerId = 0;
+      [...$('leds').children].forEach((el) => el.classList.remove('on'));
+      setStatus('Reconectando…');
+      setTimeout(connect, 1000);
+    };
+  }
+  function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
+  function setStatus(html) { $('status').innerHTML = html; }
+  function buzz(p) { if (cfg.vib && navigator.vibrate) navigator.vibrate(p); }
+
+  // ---------- botões ----------
+  const held = new Map(); // pointerId -> botão
+  function press(el, down) {
+    const b = el.dataset.b;
+    el.classList.toggle('down', down);
+    if (b === 'POWER') { if (down) { recenter(); buzz(25); } return; }
+    if (b === 'HOME') {
+      if (down) {
+        el._t = setTimeout(() => { el._long = true; recenter(); buzz([20, 40, 20]); }, 600);
+      } else {
+        clearTimeout(el._t);
+        if (!el._long) { send({ t: 'b', b: 'HOME', d: 1 }); send({ t: 'b', b: 'HOME', d: 0 }); }
+        el._long = false;
+      }
+      if (down) buzz(12);
+      return;
+    }
+    if (down) buzz(12);
+    send({ t: 'b', b, d: down ? 1 : 0 });
+  }
+  document.querySelectorAll('[data-b]').forEach((el) => {
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      el.setPointerCapture(e.pointerId);
+      held.set(e.pointerId, el);
+      press(el, true);
+    });
+    const up = (e) => {
+      if (held.get(e.pointerId) !== el) return;
+      held.delete(e.pointerId);
+      press(el, false);
+    };
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  });
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // ---------- ponteiro ----------
+  // Posição absoluta em [-1, 1]. O giroscópio dá velocidade angular; integramos no tempo.
+  // Usamos a gravidade para descobrir o eixo "vertical do mundo", então funciona com o
+  // celular deitado (tela para cima) ou mais em pé.
+  let px = 0, py = 0, roll = 0;
+  let grav = { x: 0, y: 0, z: 1 };
+  let lastT = 0, gotMotion = false, dirty = true;
+  const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const RANGE = 22; // graus para ir do centro até a borda (com sensibilidade 1)
+
+  function recenter() { px = 0; py = 0; dirty = true; }
+
+  function onMotion(e) {
+    const now = performance.now();
+    const dt = lastT ? Math.min(0.1, (now - lastT) / 1000) : 0;
+    lastT = now;
+    const g = e.accelerationIncludingGravity;
+    if (g && g.x !== null) {
+      // iOS reporta o vetor com sinal invertido em relação ao Android.
+      const s = isIOS ? -1 : 1;
+      const gx = g.x * s, gy = g.y * s, gz = g.z * s;
+      const n = Math.hypot(gx, gy, gz) || 1;
+      // filtro passa-baixa para tirar tremidas/balanço
+      grav.x += (gx / n - grav.x) * 0.2;
+      grav.y += (gy / n - grav.y) * 0.2;
+      grav.z += (gz / n - grav.z) * 0.2;
+      roll = Math.atan2(grav.x, grav.z);
+    }
+    const r = e.rotationRate;
+    if (!r || r.alpha === null || !dt) return;
+    gotMotion = true;
+    // velocidade angular no referencial do aparelho (graus/s): x=beta, y=gamma, z=alpha
+    const wx = r.beta || 0, wy = r.gamma || 0, wz = r.alpha || 0;
+    const gn = Math.hypot(grav.x, grav.y, grav.z) || 1;
+    const yaw = (wx * grav.x + wy * grav.y + wz * grav.z) / gn; // giro em torno da vertical
+    const pitch = wx; // inclinar o topo para cima/baixo
+    const dead = 0.6;
+    const k = cfg.sens / RANGE;
+    if (Math.abs(yaw) > dead) px -= yaw * dt * k * (cfg.invX ? -1 : 1);
+    if (Math.abs(pitch) > dead) py -= pitch * dt * k * 1.35 * (cfg.invY ? -1 : 1);
+    px = Math.max(-1, Math.min(1, px));
+    py = Math.max(-1, Math.min(1, py));
+    dirty = true;
+  }
+
+  // Envia no máximo ~60x por segundo.
+  function loop() {
+    if (dirty) { send({ t: 'p', x: +px.toFixed(4), y: +py.toFixed(4), r: +roll.toFixed(3) }); dirty = false; }
+    requestAnimationFrame(loop);
+  }
+
+  // Touchpad de reserva: arrastar nas áreas vazias do controle.
+  let drag = null;
+  $('remote').addEventListener('pointerdown', (e) => {
+    if (e.target.closest('[data-b]')) return;
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!drag || drag.id !== e.pointerId) return;
+    px = Math.max(-1, Math.min(1, px + (e.clientX - drag.x) / 120 * cfg.sens));
+    py = Math.max(-1, Math.min(1, py + (e.clientY - drag.y) / 160 * cfg.sens));
+    drag.x = e.clientX; drag.y = e.clientY;
+    dirty = true;
+  });
+  window.addEventListener('pointerup', (e) => { if (drag && drag.id === e.pointerId) drag = null; });
+
+  // ---------- início ----------
+  async function start() {
+    $('startMsg').textContent = 'Pedindo permissão…';
+    try {
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        const res = await DeviceMotionEvent.requestPermission();
+        if (res !== 'granted') throw new Error('Permissão negada');
+      }
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try { await DeviceOrientationEvent.requestPermission(); } catch {}
+      }
+    } catch (err) {
+      $('startMsg').textContent = 'Sem permissão para os sensores. Você ainda pode usar o modo touchpad (arraste nas áreas vazias).';
+    }
+    if (!window.isSecureContext) {
+      $('startMsg').textContent = 'Abra pelo endereço https:// para liberar o giroscópio.';
+    }
+    window.addEventListener('devicemotion', onMotion);
+    try { await navigator.wakeLock?.request('screen'); } catch {}
+    try { await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }); } catch {}
+    try { await screen.orientation?.lock?.('portrait'); } catch {}
+    $('start').classList.add('hidden');
+    connect();
+    loop();
+    setTimeout(() => {
+      if (!gotMotion) $('hint').textContent = 'Giroscópio indisponível: arraste nas áreas vazias';
+    }, 2000);
+  }
+  $('startBtn').addEventListener('click', start);
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible') { try { await navigator.wakeLock?.request('screen'); } catch {} }
+  });
+})();
+</script>
+</body>
+</html>
